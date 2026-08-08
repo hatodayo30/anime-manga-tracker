@@ -65,51 +65,70 @@
 
     <!-- ===== HOME ===== -->
     <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
-      <div data-screen-label="ホーム" style="max-width:920px;">
+      <div data-screen-label="ホーム" style="max-width:1080px;">
         <h2 style="margin-bottom:4px;">ホーム</h2>
-        <p class="text-muted" style="margin-bottom:var(--space-8);font-size:13px;">見てる・読んでる作品の状況</p>
+        <p class="text-muted" style="margin-bottom:var(--space-6);font-size:13px;">見てる・読んでる作品の状況</p>
 
-        <h5 style="color:var(--color-accent);text-transform:uppercase;letter-spacing:0.08em;font-size:12px;margin-bottom:var(--space-3);">見てるアニメ・次回放送</h5>
-        <sc-if value="{{ hasWatching }}" hint-placeholder-val="{{ true }}">
-          <div style="display:flex;flex-direction:column;gap:var(--space-3);margin-bottom:var(--space-8);">
-            <sc-for list="{{ watchingAnime }}" as="item" hint-placeholder-count="2">
-              <div class="card elev-sm" style="flex-direction:row;align-items:center;gap:var(--space-4);">
-                <div style="width:52px;height:52px;border-radius:var(--radius-md);flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:600;font-size:18px;background:{{ item.color }};color:#12131c;">{{ item.initial }}</div>
-                <div style="flex:1;min-width:0;">
-                  <div class="card-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ item.title }}</div>
-                  <div class="card-meta" style="margin-top:2px;">{{ item.progressLabel }}</div>
-                </div>
-                <div class="tag tag-accent" style="display:flex;align-items:center;gap:5px;flex:none;">
-                  <svg width="12" height="12" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="18"><circle cx="128" cy="128" r="96"/><polyline points="128,72 128,128 172,152" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  {{ item.countdownLabel }}
-                </div>
+        <div style="display:flex;gap:8px;margin-bottom:var(--space-8);flex-wrap:wrap;">
+          <sc-for list="{{ statCards }}" as="s" hint-placeholder-count="3">
+            <div class="tag tag-accent" style="font-size:13px;padding:8px 16px;">{{ s.label }}：{{ s.value }}</div>
+          </sc-for>
+        </div>
+
+        <h5 style="color:var(--color-accent);text-transform:uppercase;letter-spacing:0.08em;font-size:12px;margin-bottom:var(--space-3);">今季放送中アニメ</h5>
+        <div style="display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;margin-bottom:var(--space-8);">
+          <sc-for list="{{ seasonAnime }}" as="a" hint-placeholder-count="5">
+            <div class="card elev-sm" style="flex:none;width:200px;padding:0;overflow:hidden;cursor:pointer;position:relative;" onClick="{{ a.openModal }}">
+              <div style="width:100%;height:112px;background:{{ a.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:28px;color:#12131c;">{{ a.initial }}</div>
+              <sc-if value="{{ a.hasBadge }}" hint-placeholder-val="{{ false }}">
+                <span class="tag tag-accent" style="position:absolute;top:8px;right:8px;background:var(--color-surface);">{{ a.badgeLabel }}</span>
+              </sc-if>
+              <div style="padding:12px;">
+                <div class="card-title" style="font-size:14px;">{{ a.title }}</div>
+                <div style="display:flex;gap:6px;margin-top:6px;"><span class="tag tag-neutral">{{ a.weekday }}</span><span class="tag tag-neutral">{{ a.epLabel }}</span></div>
               </div>
-            </sc-for>
-          </div>
-        </sc-if>
-        <sc-if value="{{ hasWatchingEmpty }}" hint-placeholder-val="{{ false }}">
-          <p class="text-muted" style="font-size:13px;margin-bottom:var(--space-8);">見てるアニメはまだありません。検索から追加できます。</p>
-        </sc-if>
+            </div>
+          </sc-for>
+        </div>
 
-        <h5 style="color:var(--color-accent);text-transform:uppercase;letter-spacing:0.08em;font-size:12px;margin-bottom:var(--space-3);">読んでる漫画</h5>
-        <sc-if value="{{ hasReading }}" hint-placeholder-val="{{ true }}">
-          <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(220px,1fr));gap:var(--space-3);">
-            <sc-for list="{{ readingManga }}" as="item" hint-placeholder-count="2">
-              <div class="card elev-sm">
-                <div style="display:flex;align-items:center;gap:var(--space-3);">
-                  <div style="width:44px;height:44px;border-radius:var(--radius-md);flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:600;font-size:16px;background:{{ item.color }};color:#12131c;">{{ item.initial }}</div>
-                  <div style="min-width:0;">
-                    <div class="card-title" style="font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ item.title }}</div>
-                    <div class="card-meta">{{ item.progressLabel }}</div>
+        <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:24px;margin-bottom:var(--space-8);">
+          <div>
+            <h5 style="color:var(--color-accent);text-transform:uppercase;letter-spacing:0.08em;font-size:12px;margin-bottom:var(--space-3);">人気ランキング</h5>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <sc-for list="{{ ranking }}" as="r" hint-placeholder-count="5">
+                <div class="card elev-sm" style="flex-direction:row;align-items:center;gap:14px;padding:10px 14px;cursor:pointer;" onClick="{{ r.openModal }}">
+                  <div style="font-family:var(--font-heading);font-weight:700;font-size:18px;color:var(--color-accent);width:20px;flex:none;">{{ r.rank }}</div>
+                  <div style="width:36px;height:36px;border-radius:var(--radius-sm);flex:none;background:{{ r.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;color:#12131c;">{{ r.initial }}</div>
+                  <div style="flex:1;min-width:0;"><div class="card-title" style="font-size:14px;">{{ r.title }}</div></div>
+                  <sc-if value="{{ r.hasBadge }}" hint-placeholder-val="{{ false }}">
+                    <span class="tag tag-accent" style="flex:none;">{{ r.badgeLabel }}</span>
+                  </sc-if>
+                  <div class="text-muted" style="font-size:12px;flex:none;">★{{ r.score }}</div>
+                  <div class="tag tag-neutral" style="flex:none;">{{ r.viewers }}視聴</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div>
+            <h5 style="color:var(--color-accent);text-transform:uppercase;letter-spacing:0.08em;font-size:12px;margin-bottom:var(--space-3);">読んでる漫画</h5>
+            <sc-if value="{{ hasReading }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <sc-for list="{{ readingManga }}" as="item" hint-placeholder-count="2">
+                  <div class="card elev-sm" style="flex-direction:row;align-items:center;gap:10px;padding:8px 12px;">
+                    <div style="width:32px;height:32px;border-radius:var(--radius-sm);flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:600;font-size:13px;background:{{ item.color }};color:#12131c;">{{ item.initial }}</div>
+                    <div style="flex:1;min-width:0;">
+                      <div class="card-title" style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ item.title }}</div>
+                    </div>
+                    <div class="tag tag-neutral" style="flex:none;font-size:11px;">{{ item.progressLabel }}</div>
                   </div>
-                </div>
+                </sc-for>
               </div>
-            </sc-for>
+            </sc-if>
+            <sc-if value="{{ hasReadingEmpty }}" hint-placeholder-val="{{ false }}">
+              <p class="text-muted" style="font-size:13px;">読んでる漫画はまだありません。</p>
+            </sc-if>
           </div>
-        </sc-if>
-        <sc-if value="{{ hasReadingEmpty }}" hint-placeholder-val="{{ false }}">
-          <p class="text-muted" style="font-size:13px;">読んでる漫画はまだありません。</p>
-        </sc-if>
+        </div>
       </div>
     </sc-if>
 
@@ -149,7 +168,10 @@
           </div>
         </sc-if>
         <sc-if value="{{ hasNoSearchResults }}" hint-placeholder-val="{{ false }}">
-          <p class="text-muted" style="font-size:13px;">該当する作品が見つかりません。</p>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:var(--space-3);padding:var(--space-8) 0;color:color-mix(in srgb, var(--color-text) 45%, transparent);">
+            <svg width="36" height="36" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="14"><circle cx="112" cy="112" r="76"/><line x1="168" y1="168" x2="220" y2="220" stroke-linecap="round"/></svg>
+            <p style="font-size:13px;margin:0;">該当する作品が見つかりません。別のキーワードを試してください。</p>
+          </div>
         </sc-if>
       </div>
     </sc-if>
@@ -180,29 +202,27 @@
         </sc-if>
 
         <sc-if value="{{ hasLibraryResults }}" hint-placeholder-val="{{ true }}">
-          <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(220px,1fr));gap:var(--space-3);">
+          <div style="display:flex;flex-direction:column;gap:var(--space-2);">
             <sc-for list="{{ libraryResults }}" as="item" hint-placeholder-count="4">
-              <div class="card elev-sm">
-                <div style="display:flex;gap:var(--space-3);">
-                  <div style="width:56px;height:74px;border-radius:var(--radius-sm);flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:600;font-size:20px;background:{{ item.color }};color:#12131c;">{{ item.initial }}</div>
-                  <div style="min-width:0;flex:1;">
-                    <div class="card-title" style="font-size:15px;">{{ item.title }}</div>
-                    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">
-                      <sc-for list="{{ item.genreTags }}" as="g" hint-placeholder-count="1">
-                        <span class="tag tag-neutral">{{ g }}</span>
-                      </sc-for>
-                    </div>
+              <div class="card elev-sm" style="flex-direction:row;align-items:center;gap:var(--space-3);padding:8px var(--space-3);">
+                <div style="width:40px;height:40px;border-radius:var(--radius-sm);flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:600;font-size:15px;background:{{ item.color }};color:#12131c;">{{ item.initial }}</div>
+                <div style="min-width:0;flex:1;">
+                  <div class="card-title" style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ item.title }}</div>
+                  <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;">
+                    <sc-for list="{{ item.genreTags }}" as="g" hint-placeholder-count="1">
+                      <span class="tag tag-neutral" style="font-size:10px;padding:2px 7px;">{{ g }}</span>
+                    </sc-for>
                   </div>
                 </div>
                 <sc-if value="{{ item.showProgress }}" hint-placeholder-val="{{ false }}">
                   <sc-if value="{{ item.isEditing }}" hint-placeholder-val="{{ false }}">
-                    <div style="display:flex;align-items:baseline;gap:3px;margin-top:4px;font-size:12px;color:color-mix(in srgb, var(--color-text) 70%, transparent);">
+                    <div style="display:flex;align-items:baseline;gap:3px;font-size:12px;color:color-mix(in srgb, var(--color-text) 70%, transparent);flex:none;">
                       <input class="input" type="number" min="0" autoFocus="{{ true }}" style="width:34px;padding:2px 2px;font-size:12px;text-align:right;background:transparent;border:none;border-bottom:1px solid var(--color-accent);border-radius:0;color:var(--color-text);" value="{{ item.progress }}" onChange="{{ item.onProgressChange }}" onBlur="{{ item.stopEdit }}" onKeyDown="{{ item.onKeyDown }}"/>
                       <span>{{ item.progressSuffix }}</span>
                     </div>
                   </sc-if>
                   <sc-if value="{{ item.isNotEditing }}" hint-placeholder-val="{{ true }}">
-                    <div style="margin-top:4px;font-size:12px;color:color-mix(in srgb, var(--color-text) 70%, transparent);cursor:pointer;" onClick="{{ item.startEdit }}">{{ item.progressDisplay }}</div>
+                    <div class="tag tag-accent" style="cursor:pointer;flex:none;" onClick="{{ item.startEdit }}">{{ item.progressDisplay }}</div>
                   </sc-if>
                 </sc-if>
               </div>
@@ -217,6 +237,29 @@
 
   </main>
 </div>
+
+<sc-if value="{{ hasModal }}" hint-placeholder-val="{{ false }}">
+  <div style="position:fixed;inset:0;background:rgba(20,18,30,0.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50;" onClick="{{ closeModal }}">
+    <div class="card elev-lg" style="width:380px;max-width:100%;padding:0;overflow:hidden;" onClick="{{ stopPropagation }}">
+      <div style="width:100%;height:180px;background:{{ modal.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:48px;color:#12131c;position:relative;">
+        {{ modal.initial }}
+        <button class="btn btn-icon" style="position:absolute;top:10px;right:10px;background:var(--color-surface);" onClick="{{ closeModal }}">✕</button>
+      </div>
+      <div style="padding:20px;">
+        <div class="card-title" style="font-size:18px;margin-bottom:6px;">{{ modal.title }}</div>
+        <div style="display:flex;gap:6px;margin-bottom:12px;">
+          <sc-for list="{{ modal.genres }}" as="g" hint-placeholder-count="2"><span class="tag tag-neutral">{{ g }}</span></sc-for>
+        </div>
+        <p class="text-muted" style="font-size:13px;line-height:1.6;margin-bottom:18px;">{{ modal.synopsis }}</p>
+        <div style="display:flex;gap:8px;">
+          <button class="btn {{ modal.doneBtnClass }}" style="flex:1;font-size:13px;" onClick="{{ modal.setDone }}">{{ modal.doneLabel }}</button>
+          <button class="btn {{ modal.activeBtnClass }}" style="flex:1;font-size:13px;" onClick="{{ modal.setActive }}">{{ modal.activeLabel }}</button>
+          <button class="btn {{ modal.wantBtnClass }}" style="flex:1;font-size:13px;" onClick="{{ modal.setWant }}">{{ modal.wantLabel }}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</sc-if>
 
 <sc-if value="{{ isBottomNav }}" hint-placeholder-val="{{ false }}">
   <nav style="position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:space-around;padding:8px 4px calc(8px + env(safe-area-inset-bottom));background:var(--color-surface);border-top:1px solid var(--color-divider);">
@@ -257,6 +300,24 @@ function makeSample() {
   ];
 }
 
+function makeDiscoveryData() {
+  const seasonAnime = [
+    { key: 'season-1', title: '進撃の巨人 The Final', initial: '進', color: '#8b7ff0', weekday: '土 24:00', epLabel: '12話', genres: ['アクション', 'ダーク'], synopsis: '人類対巨人の最終決戦。すべての謎が明らかになる完結シーズン。' },
+    { key: 'season-2', title: '鬼滅の刃 無限城編', initial: '鬼', color: '#a89af5', weekday: '日 23:30', epLabel: '10話', genres: ['アクション', 'ダーク'], synopsis: '柱たちと鬼舞辻無惨の最終決戦の舞台、無限城へ。' },
+    { key: 'season-3', title: '呪術廻戦 第3期', initial: '呪', color: '#7972a9', weekday: '木 25:00', epLabel: '8話', genres: ['アクション'], synopsis: '新たな呪霊との戦いを描く、シリーズ最新章。' },
+    { key: 'season-4', title: 'ソードアート・オンライン', initial: '剣', color: '#b5abfc', weekday: '金 24:30', epLabel: '15話', genres: ['ファンタジー'], synopsis: '仮想現実世界で繰り広げられる冒険と絆の物語。' },
+    { key: 'season-5', title: '転生したらスライムだった件', initial: '転', color: '#9690c9', weekday: '水 23:00', epLabel: '6話', genres: ['ファンタジー', '日常'], synopsis: 'スライムに転生した主人公が、異世界で国を築く物語。' },
+  ];
+  const ranking = [
+    { key: 'rank-1', rank: 1, title: '鬼滅の刃 無限城編', initial: '鬼', color: '#a89af5', genres: ['アクション', 'ダーク'], score: '9.2', viewers: '18.4万', synopsis: '柱たちと鬼舞辻無惨の最終決戦の舞台、無限城へ。' },
+    { key: 'rank-2', rank: 2, title: '進撃の巨人 The Final', initial: '進', color: '#8b7ff0', genres: ['ダーク', 'ドラマ'], score: '9.0', viewers: '15.1万', synopsis: '人類対巨人の最終決戦。すべての謎が明らかになる完結シーズン。' },
+    { key: 'rank-3', rank: 3, title: 'ワンピース', initial: 'ワ', color: '#6e5fd6', genres: ['冒険'], score: '8.8', viewers: '12.9万', synopsis: '大海賊時代を生きる少年たちの冒険譚。' },
+    { key: 'rank-4', rank: 4, title: '呪術廻戦 第3期', initial: '呪', color: '#7972a9', genres: ['アクション'], score: '8.6', viewers: '10.2万', synopsis: '新たな呪霊との戦いを描く、シリーズ最新章。' },
+    { key: 'rank-5', rank: 5, title: 'ソードアート・オンライン', initial: '剣', color: '#b5abfc', genres: ['ファンタジー'], score: '8.3', viewers: '8.7万', synopsis: '仮想現実世界で繰り広げられる冒険と絆の物語。' },
+  ];
+  return { seasonAnime, ranking };
+}
+
 function formatCountdown(ts) {
   if (!ts) return '';
   const diff = ts - Date.now();
@@ -277,7 +338,10 @@ class Component extends DCLogic {
     libStatus: 'active',
     activeGenres: [],
     editingProgressId: null,
+    discoveryStatuses: {},
+    modalKey: null,
   };
+  discovery = makeDiscoveryData();
 
   componentDidMount() {
     this.updateSize();
@@ -304,7 +368,32 @@ class Component extends DCLogic {
   }
 
   renderVals() {
-    const { screen, isMobile, library, searchTab, searchQuery, libType, libStatus, activeGenres, editingProgressId } = this.state;
+    const { screen, isMobile, library, searchTab, searchQuery, libType, libStatus, activeGenres, editingProgressId, discoveryStatuses, modalKey } = this.state;
+    const allDiscovery = [...this.discovery.seasonAnime, ...this.discovery.ranking];
+    const badgeLabel = (k) => ({ done: '見た ✓', active: '見てる ✓', want: '見たい ✓' }[discoveryStatuses[k]]);
+    const withBadge = (item) => ({
+      ...item,
+      hasBadge: !!discoveryStatuses[item.key],
+      badgeLabel: badgeLabel(item.key),
+      openModal: () => this.setState({ modalKey: item.key }),
+    });
+    const seasonAnime = this.discovery.seasonAnime.map(withBadge);
+    const ranking = this.discovery.ranking.map(withBadge);
+    const modalSrc = modalKey ? allDiscovery.find((i) => i.key === modalKey) : null;
+    const modalBtnClass = (k) => (discoveryStatuses[modalKey] === k ? 'btn-primary' : 'btn-secondary');
+    const modal = modalSrc ? {
+      ...modalSrc,
+      doneLabel: '見た', activeLabel: '見てる', wantLabel: '見たい',
+      doneBtnClass: modalBtnClass('done'), activeBtnClass: modalBtnClass('active'), wantBtnClass: modalBtnClass('want'),
+      setDone: () => this.setState((s) => ({ discoveryStatuses: { ...s.discoveryStatuses, [modalKey]: 'done' }, modalKey: null })),
+      setActive: () => this.setState((s) => ({ discoveryStatuses: { ...s.discoveryStatuses, [modalKey]: 'active' }, modalKey: null })),
+      setWant: () => this.setState((s) => ({ discoveryStatuses: { ...s.discoveryStatuses, [modalKey]: 'want' }, modalKey: null })),
+    } : null;
+    const statCards = [
+      { label: '見た本数', value: '128本' },
+      { label: '見てる本数', value: '6本' },
+      { label: '今季消化率', value: '73%' },
+    ];
     const forceNav = this.props.forceNavStyle ?? 'auto';
     const isSidebar = forceNav === 'sidebar' ? true : forceNav === 'bottom' ? false : !isMobile;
     const isBottomNav = !isSidebar;
@@ -377,6 +466,8 @@ class Component extends DCLogic {
 
       hasWatching: watchingAnime.length > 0, hasWatchingEmpty: watchingAnime.length === 0, watchingAnime,
       hasReading: readingManga.length > 0, hasReadingEmpty: readingManga.length === 0, readingManga,
+      statCards, seasonAnime, ranking,
+      hasModal: !!modal, modal, closeModal: () => this.setState({ modalKey: null }), stopPropagation: (e) => e.stopPropagation(),
 
       isSearchAnime: searchTab === 'anime', isSearchManga: searchTab === 'manga',
       setSearchTabAnime: () => this.setState({ searchTab: 'anime' }),

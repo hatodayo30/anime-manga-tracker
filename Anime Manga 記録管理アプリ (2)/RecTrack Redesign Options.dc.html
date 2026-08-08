@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    :root {
+      --color-bg: #f4f3fa; --color-surface: #ffffff; --color-text: #262433;
+      --color-divider: color-mix(in srgb, #262433 12%, transparent);
+      --color-neutral-800: #ececf4; --color-neutral-900: #e1e0ec;
+      --color-accent: #6e5fd6; --color-accent-800: #e6e2fb;
+    }
+    * { box-sizing: border-box; }
+    ::-webkit-scrollbar { height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--color-neutral-800); border-radius: 8px; }
+    .opt-badge { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:50%; background:var(--color-accent); color:#fff; font-family:var(--font-heading); font-weight:700; font-size:13px; }
+    .opt-wrap { background:var(--color-bg); border-radius:16px; padding:32px; width:1360px; }
+    .sechead { font-size:13px; font-weight:700; color:var(--color-accent); text-transform:uppercase; letter-spacing:0.06em; margin:0 0 12px; }
+    .hrow { display:flex; gap:14px; overflow-x:auto; padding-bottom:6px; }
+  </style>
+</helmet>
+
+<section id="1e" style="margin:0 0 56px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;"><span class="opt-badge">1e</span><h3 style="margin:0;">パターンE：ビジュアル×ダッシュボード</h3></div>
+  <div class="opt-wrap">
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:28px;">
+      <div style="position:relative;border-radius:var(--radius-lg);overflow:hidden;background:{{ hero.color }};min-height:280px;display:flex;flex-direction:column;justify-content:flex-end;padding:28px;">
+        <div style="position:absolute;inset:0;background:linear-gradient(180deg, transparent 40%, rgba(20,18,30,0.75) 100%);"></div>
+        <div style="position:relative;z-index:1;">
+          <span class="tag tag-accent" style="background:#fff;color:var(--color-accent);margin-bottom:10px;display:inline-block;">今季1位</span>
+          <h1 style="color:#fff;margin:0 0 8px;font-size:36px;">{{ hero.title }}</h1>
+          <div style="display:flex;gap:6px;margin-bottom:14px;">
+            <sc-for list="{{ hero.genres }}" as="g" hint-placeholder-count="2"><span class="tag" style="background:rgba(255,255,255,0.18);color:#fff;">{{ g }}</span></sc-for>
+          </div>
+          <button class="btn btn-primary">見てるに追加</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <sc-for list="{{ statCards }}" as="s" hint-placeholder-count="3">
+          <div class="card elev-sm" style="flex:1;justify-content:center;">
+            <div class="card-meta">{{ s.label }}</div>
+            <div style="font-family:var(--font-heading);font-size:26px;font-weight:700;">{{ s.value }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <p class="sechead">今季放送中アニメ</p>
+    <div class="hrow" style="margin-bottom:28px;">
+      <sc-for list="{{ seasonAnime }}" as="a" hint-placeholder-count="5">
+        <div class="card elev-sm" style="flex:none;width:220px;padding:0;overflow:hidden;">
+          <div style="width:100%;height:120px;background:{{ a.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:30px;color:#12131c;">{{ a.initial }}</div>
+          <div style="padding:12px;">
+            <div class="card-title" style="font-size:14px;">{{ a.title }}</div>
+            <div style="display:flex;gap:6px;margin-top:6px;"><span class="tag tag-neutral">{{ a.weekday }}</span><span class="tag tag-neutral">{{ a.epLabel }}</span></div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+
+    <p class="sechead">積み作品（まだ手つけていません）</p>
+    <div class="hrow">
+      <sc-for list="{{ tsumiWorks }}" as="t" hint-placeholder-count="4">
+        <div class="card elev-sm" style="flex:none;width:160px;padding:0;overflow:hidden;">
+          <div style="width:100%;height:200px;background:{{ t.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:24px;color:#12131c;">{{ t.initial }}</div>
+          <div style="padding:10px;"><div class="card-title" style="font-size:13px;">{{ t.title }}</div></div>
+        </div>
+      </sc-for>
+    </div>
+    <p class="text-muted" style="font-size:12px;margin-top:20px;">※マイライブラリにはジャンル分布の円グラフを追加予定</p>
+  </div>
+</section>
+
+<section id="1d" style="margin:0 0 56px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;"><span class="opt-badge">1d</span><h3 style="margin:0;">パターンD：情報密度×ダッシュボード</h3></div>
+  <div class="opt-wrap">
+    <div style="display:flex;gap:10px;margin-bottom:28px;">
+      <sc-for list="{{ statCards }}" as="s" hint-placeholder-count="3">
+        <div class="tag tag-accent" style="font-size:13px;padding:8px 16px;">{{ s.label }}：{{ s.value }}</div>
+      </sc-for>
+    </div>
+
+    <p class="sechead">今季放送中アニメ</p>
+    <div class="hrow" style="margin-bottom:28px;">
+      <sc-for list="{{ seasonAnime }}" as="a" hint-placeholder-count="5">
+        <div class="card elev-sm" style="flex:none;width:220px;padding:0;overflow:hidden;">
+          <div style="width:100%;height:120px;background:{{ a.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:30px;color:#12131c;">{{ a.initial }}</div>
+          <div style="padding:12px;">
+            <div class="card-title" style="font-size:14px;">{{ a.title }}</div>
+            <div style="display:flex;gap:6px;margin-top:6px;"><span class="tag tag-neutral">{{ a.weekday }}</span><span class="tag tag-neutral">{{ a.epLabel }}</span></div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:24px;">
+      <div>
+        <p class="sechead">人気ランキング</p>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <sc-for list="{{ ranking }}" as="r" hint-placeholder-count="5">
+            <div class="card elev-sm" style="flex-direction:row;align-items:center;gap:14px;padding:10px 14px;">
+              <div style="font-family:var(--font-heading);font-weight:700;font-size:18px;color:var(--color-accent);width:24px;flex:none;">{{ r.rank }}</div>
+              <div style="width:36px;height:36px;border-radius:var(--radius-sm);flex:none;background:{{ r.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;color:#12131c;">{{ r.initial }}</div>
+              <div style="flex:1;min-width:0;"><div class="card-title" style="font-size:14px;">{{ r.title }}</div></div>
+              <div class="text-muted" style="font-size:12px;flex:none;">★{{ r.score }}</div>
+              <div class="tag tag-neutral" style="flex:none;">{{ r.viewers }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div>
+        <p class="sechead">積み作品 ＋ 今季人気TOP5</p>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <sc-for list="{{ tsumiWorks }}" as="t" hint-placeholder-count="4">
+            <div class="card elev-sm" style="flex-direction:row;align-items:center;gap:12px;padding:8px 12px;">
+              <div style="width:32px;height:32px;border-radius:var(--radius-sm);flex:none;background:{{ t.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:13px;color:#12131c;">{{ t.initial }}</div>
+              <div class="card-title" style="font-size:13px;">{{ t.title }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="1c" style="margin:0 0 56px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;"><span class="opt-badge">1c</span><h3 style="margin:0;">パターンC：ダッシュボード風</h3></div>
+  <div class="opt-wrap">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px;">
+      <sc-for list="{{ statCards }}" as="s" hint-placeholder-count="3">
+        <div class="card elev-sm" style="justify-content:center;">
+          <div class="card-meta">{{ s.label }}</div>
+          <div style="font-family:var(--font-heading);font-size:30px;font-weight:700;">{{ s.value }}</div>
+        </div>
+      </sc-for>
+      <div class="card elev-sm" style="justify-content:center;">
+        <div class="card-meta" style="margin-bottom:8px;">ジャンル分布</div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <sc-for list="{{ genreDist }}" as="g" hint-placeholder-count="3">
+            <div>
+              <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;"><span>{{ g.name }}</span><span>{{ g.pct }}%</span></div>
+              <div style="height:6px;background:var(--color-neutral-800);border-radius:4px;overflow:hidden;"><div style="height:100%;width:{{ g.pctWidth }};background:var(--color-accent);"></div></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+
+    <p class="sechead">人気ランキング</p>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:28px;">
+      <sc-for list="{{ ranking }}" as="r" hint-placeholder-count="5">
+        <div class="card elev-sm" style="flex-direction:row;align-items:center;gap:14px;padding:10px 14px;">
+          <span class="tag tag-accent" style="flex:none;">{{ r.rank }}位</span>
+          <div class="card-title" style="font-size:14px;flex:1;">{{ r.title }}</div>
+          <div style="width:140px;height:8px;background:var(--color-neutral-800);border-radius:4px;overflow:hidden;flex:none;"><div style="height:100%;width:{{ r.scoreWidth }};background:var(--color-accent);"></div></div>
+          <div class="text-muted" style="font-size:12px;width:32px;text-align:right;flex:none;">{{ r.score }}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <p class="sechead">積み作品（まだ見てない/読んでない）</p>
+    <div class="hrow">
+      <sc-for list="{{ tsumiWorks }}" as="t" hint-placeholder-count="4">
+        <div class="card elev-sm" style="flex:none;width:140px;align-items:center;text-align:center;gap:8px;">
+          <div style="width:56px;height:56px;border-radius:50%;background:{{ t.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;color:#12131c;">{{ t.initial }}</div>
+          <div class="card-title" style="font-size:12px;">{{ t.title }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</section>
+
+<section id="1b" style="margin:0 0 56px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;"><span class="opt-badge">1b</span><h3 style="margin:0;">パターンB：ビジュアル重視（バナー型）</h3></div>
+  <div class="opt-wrap">
+    <div style="position:relative;border-radius:var(--radius-lg);overflow:hidden;background:{{ hero.color }};min-height:320px;display:flex;flex-direction:column;justify-content:flex-end;padding:32px;margin-bottom:28px;">
+      <div style="position:absolute;inset:0;background:linear-gradient(180deg, transparent 30%, rgba(20,18,30,0.8) 100%);"></div>
+      <div style="position:relative;z-index:1;">
+        <span class="tag tag-accent" style="background:#fff;color:var(--color-accent);margin-bottom:10px;display:inline-block;">今季1位</span>
+        <h1 style="color:#fff;margin:0 0 10px;font-size:42px;">{{ hero.title }}</h1>
+        <div style="display:flex;gap:6px;margin-bottom:16px;">
+          <sc-for list="{{ hero.genres }}" as="g" hint-placeholder-count="2"><span class="tag" style="background:rgba(255,255,255,0.18);color:#fff;">{{ g }}</span></sc-for>
+        </div>
+        <button class="btn btn-primary">見てるに追加</button>
+      </div>
+    </div>
+
+    <p class="sechead">今季放送中アニメ</p>
+    <div class="hrow" style="margin-bottom:28px;">
+      <sc-for list="{{ seasonAnime }}" as="a" hint-placeholder-count="5">
+        <div class="card elev-sm" style="flex:none;width:280px;padding:0;overflow:hidden;">
+          <div style="width:100%;height:157px;background:{{ a.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:36px;color:#12131c;">{{ a.initial }}</div>
+          <div style="padding:14px;"><div class="card-title">{{ a.title }}</div><div style="display:flex;gap:6px;margin-top:8px;"><span class="tag tag-neutral">{{ a.weekday }}</span><span class="tag tag-neutral">{{ a.epLabel }}</span></div></div>
+        </div>
+      </sc-for>
+    </div>
+
+    <p class="sechead">人気ランキング</p>
+    <div class="hrow">
+      <sc-for list="{{ ranking }}" as="r" hint-placeholder-count="5">
+        <div class="card elev-sm" style="flex:none;width:280px;padding:0;overflow:hidden;position:relative;">
+          <div style="width:100%;height:157px;background:{{ r.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:36px;color:#12131c;">{{ r.initial }}</div>
+          <span style="position:absolute;top:10px;left:10px;background:rgba(20,18,30,0.7);color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:700;">{{ r.rank }}位</span>
+          <div style="padding:14px;"><div class="card-title">{{ r.title }}</div></div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</section>
+
+<section id="1a" style="margin:0 0 40px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;"><span class="opt-badge">1a</span><h3 style="margin:0;">パターンA：情報密度重視</h3></div>
+  <div class="opt-wrap">
+    <p class="sechead">今季放送中アニメ</p>
+    <div class="hrow" style="margin-bottom:28px;">
+      <sc-for list="{{ seasonAnime }}" as="a" hint-placeholder-count="5">
+        <div class="card elev-sm" style="flex:none;width:200px;padding:0;overflow:hidden;">
+          <div style="width:100%;height:112px;background:{{ a.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:28px;color:#12131c;">{{ a.initial }}</div>
+          <div style="padding:12px;"><div class="card-title" style="font-size:14px;">{{ a.title }}</div><div style="display:flex;gap:6px;margin-top:6px;"><span class="tag tag-neutral">{{ a.weekday }}</span><span class="tag tag-neutral">{{ a.epLabel }}</span></div></div>
+        </div>
+      </sc-for>
+    </div>
+
+    <p class="sechead">人気ランキング</p>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <sc-for list="{{ ranking }}" as="r" hint-placeholder-count="5">
+        <div class="card elev-sm" style="flex-direction:row;align-items:center;gap:14px;padding:10px 14px;">
+          <div style="font-family:var(--font-heading);font-weight:700;font-size:18px;color:var(--color-accent);width:24px;flex:none;">{{ r.rank }}</div>
+          <div style="width:40px;height:40px;border-radius:var(--radius-sm);flex:none;background:{{ r.color }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;color:#12131c;">{{ r.initial }}</div>
+          <div style="flex:1;min-width:0;"><div class="card-title" style="font-size:14px;">{{ r.title }}</div><div style="display:flex;gap:4px;margin-top:2px;"><sc-for list="{{ r.genres }}" as="g" hint-placeholder-count="2"><span class="tag tag-neutral" style="font-size:10px;padding:2px 6px;">{{ g }}</span></sc-for></div></div>
+          <div class="text-muted" style="font-size:12px;flex:none;">★{{ r.score }}</div>
+          <div class="tag tag-neutral" style="flex:none;">{{ r.viewers }}視聴</div>
+        </div>
+      </sc-for>
+    </div>
+    <p class="text-muted" style="font-size:12px;margin-top:20px;">※検索画面：検索前は「今季人気TOP5」をデフォルト表示</p>
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+function pct(n) { return n + '%'; }
+
+class Component extends DCLogic {
+  renderVals() {
+    const seasonAnime = [
+      { title: '進撃の巨人 The Final', initial: '進', color: '#8b7ff0', weekday: '土 24:00', epLabel: '12話' },
+      { title: '鬼滅の刃 無限城編', initial: '鬼', color: '#a89af5', weekday: '日 23:30', epLabel: '10話' },
+      { title: '呪術廻戦 第3期', initial: '呪', color: '#7972a9', weekday: '木 25:00', epLabel: '8話' },
+      { title: 'ソードアート・オンライン', initial: '剣', color: '#b5abfc', weekday: '金 24:30', epLabel: '15話' },
+      { title: '転生したらスライムだった件', initial: '転', color: '#9690c9', weekday: '水 23:00', epLabel: '6話' },
+    ];
+    const ranking = [
+      { rank: 1, title: '鬼滅の刃 無限城編', initial: '鬼', color: '#a89af5', genres: ['アクション', 'ダーク'], score: '9.2', viewers: '18.4万', scoreWidth: pct(96) },
+      { rank: 2, title: '進撃の巨人 The Final', initial: '進', color: '#8b7ff0', genres: ['ダーク', 'ドラマ'], score: '9.0', viewers: '15.1万', scoreWidth: pct(92) },
+      { rank: 3, title: 'ワンピース', initial: 'ワ', color: '#6e5fd6', genres: ['冒険'], score: '8.8', viewers: '12.9万', scoreWidth: pct(88) },
+      { rank: 4, title: '呪術廻戦 第3期', initial: '呪', color: '#7972a9', genres: ['アクション'], score: '8.6', viewers: '10.2万', scoreWidth: pct(85) },
+      { rank: 5, title: 'ソードアート・オンライン', initial: '剣', color: '#b5abfc', genres: ['ファンタジー'], score: '8.3', viewers: '8.7万', scoreWidth: pct(80) },
+    ];
+    const tsumiWorks = [
+      { title: 'ハイキュー!!', initial: 'ハ', color: '#d2cefd' },
+      { title: '東京卒業', initial: '東', color: '#b5afe8' },
+      { title: '鋼の錬金術師', initial: '鋼', color: '#9690c9' },
+      { title: '花時計の少女', initial: '花', color: '#5c5783' },
+    ];
+    const statCards = [
+      { label: '見た本数', value: '128本' },
+      { label: '見てる本数', value: '6本' },
+      { label: '今季消化率', value: '73%' },
+    ];
+    const genreDist = [
+      { name: 'アクション', pct: 42, pctWidth: pct(42) },
+      { name: 'ファンタジー', pct: 28, pctWidth: pct(28) },
+      { name: '日常', pct: 18, pctWidth: pct(18) },
+    ];
+    const hero = { title: '鬼滅の刃 無限城編', color: '#8b7ff0', genres: ['アクション', 'ダーク', 'アニメ'] };
+    return { seasonAnime, ranking, tsumiWorks, statCards, genreDist, hero };
+  }
+}
+
+</script>
+</body>
+</html>
