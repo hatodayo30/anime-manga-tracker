@@ -73,8 +73,7 @@ function renderResults(container, results, libraryByAniListId) {
     const existing = libraryByAniListId.get(item.anilistId);
     const currentStatus = existing ? existing.status : null;
 
-    const displayItem = { title: item.title, coverImageUrl: item.coverImageUrl };
-    const thumb = thumbEl(displayItem, { width: '100%', height: 'auto', fontSize: 18 });
+    const thumb = thumbEl(item, { width: '100%', height: 'auto', fontSize: 18 });
     thumb.style.aspectRatio = '1/1';
     thumb.style.borderRadius = 'var(--radius-sm)';
 
@@ -103,7 +102,7 @@ function renderResults(container, results, libraryByAniListId) {
 
     const card = el('div', { className: 'card elev-sm', style: { padding: 'var(--space-2)', gap: '5px' } }, [
       thumb,
-      el('div', { className: 'card-title', style: { fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, item.title),
+      el('div', { className: 'card-title', style: { fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, displayTitle(item)),
       genreTags,
       buttons,
     ]);
@@ -118,7 +117,7 @@ async function addToLibrary(item, status) {
     await api.createRecord({
       anilistId: item.anilistId,
       mediaType: state.tab,
-      title: item.title,
+      title: displayTitle(item),
       coverImageUrl: item.coverImageUrl,
       genres: item.genres,
       total: item.total,
@@ -131,4 +130,7 @@ async function addToLibrary(item, status) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', initSearchPage);
+window.authReadyPromise.then((user) => {
+  if (!user) return; // 未ログイン: auth.js がログイン画面へリダイレクト中
+  initSearchPage();
+});

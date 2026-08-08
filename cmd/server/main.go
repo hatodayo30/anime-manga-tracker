@@ -12,6 +12,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/anilist"
 	"github.com/hatodayo30/anime-manga-tracker/internal/config"
 	"github.com/hatodayo30/anime-manga-tracker/internal/handler"
+	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
 	"github.com/hatodayo30/anime-manga-tracker/internal/repository"
 	"github.com/hatodayo30/anime-manga-tracker/internal/service"
 )
@@ -41,14 +42,34 @@ func run() error {
 	recordService := service.NewRecordService(recordRepo)
 	recordHandler := handler.NewRecordHandler(recordService)
 
+	userRepo := repository.NewUserRepository(pool)
+	sessionRepo := repository.NewSessionRepository(pool)
+	authService := service.NewAuthService(userRepo, sessionRepo)
+	authHandler := handler.NewAuthHandler(authService)
+	auth := middleware.NewAuth(authService)
+
 	anilistClient := anilist.NewClient()
 	searchHandler := handler.NewSearchHandler(anilistClient)
+	homeHandler := handler.NewHomeHandler(anilistClient)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/records", recordHandler.List)
-	mux.HandleFunc("POST /api/records", recordHandler.Create)
-	mux.HandleFunc("PATCH /api/records/{id}", recordHandler.Update)
+
+	// ログイン必須（自分のライブラリ）
+	mux.HandleFunc("GET /api/records", auth.RequireUser(recordHandler.List))
+	mux.HandleFunc("POST /api/records", auth.RequireUser(recordHandler.Create))
+	mux.HandleFunc("PATCH /api/records/{id}", auth.RequireUser(recordHandler.Update))
+
+	// ログイン不要（公開データ）
 	mux.HandleFunc("GET /api/search", searchHandler.Search)
+	mux.HandleFunc("GET /api/home/season-anime", homeHandler.SeasonAnime)
+	mux.HandleFunc("GET /api/home/trending", homeHandler.Trending)
+
+	// 認証
+	mux.HandleFunc("POST /api/auth/signup", authHandler.SignUp)
+	mux.HandleFunc("POST /api/auth/login", authHandler.Login)
+	mux.HandleFunc("POST /api/auth/logout", authHandler.Logout)
+	mux.HandleFunc("GET /api/auth/me", authHandler.Me)
+
 	mux.Handle("/", handler.NewStaticHandler("web"))
 
 	srv := &http.Server{

@@ -138,6 +138,7 @@ a { color: var(--color-accent); text-underline-offset: 3px; }
 .seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
 .seg-opt.checked { color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); }
 .seg-opt:not(.checked):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+button.seg-opt { border: none; background: none; font: inherit; color: inherit; }
 
 /* — cards — */
 .card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface); }

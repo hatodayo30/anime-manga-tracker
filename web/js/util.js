@@ -23,11 +23,51 @@ function thumbEl(item, { width, height, fontSize }) {
   if (item.coverImageUrl) {
     el.style.backgroundImage = `url("${item.coverImageUrl}")`;
   } else {
-    el.style.background = colorForTitle(item.title);
-    el.textContent = initialForTitle(item.title);
+    const title = displayTitle(item);
+    el.style.background = colorForTitle(title);
+    el.textContent = initialForTitle(title);
   }
   return el;
 }
+
+// タイトル表示言語（JA/EN）の設定。AniList検索結果は title(ja) / titleEn を両方持つ。
+const LANG_STORAGE_KEY = 'lang';
+
+function getLang() {
+  return localStorage.getItem(LANG_STORAGE_KEY) === 'en' ? 'en' : 'ja';
+}
+
+function setLang(lang) {
+  localStorage.setItem(LANG_STORAGE_KEY, lang);
+}
+
+function displayTitle(item) {
+  if (getLang() === 'en' && item.titleEn) return item.titleEn;
+  return item.title;
+}
+
+// サイドバーの id="lang-toggle" があるページで JA/EN 切り替えボタンを有効化する。
+function initLangToggle() {
+  const container = document.getElementById('lang-toggle');
+  if (!container) return;
+
+  const sync = () => {
+    for (const btn of container.querySelectorAll('[data-lang]')) {
+      btn.classList.toggle('checked', btn.dataset.lang === getLang());
+    }
+  };
+
+  container.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-lang]');
+    if (!btn || btn.dataset.lang === getLang()) return;
+    setLang(btn.dataset.lang);
+    location.reload();
+  });
+
+  sync();
+}
+
+initLangToggle();
 
 function formatCountdown(nextAiringAt) {
   if (!nextAiringAt) return '';

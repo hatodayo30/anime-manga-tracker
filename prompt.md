@@ -55,3 +55,21 @@
 
 この仕様をホーム画面に反映してください。
 また prompt.md のディレクトリ構成の合意が取れたので、実装を開始してください。
+
+検索結果について 2 点修正をお願いします。
+
+1. 検索結果を popularity（人気）の降順でソートしてください
+   AniList API のクエリに sort: [POPULARITY_DESC] を追加する
+
+2. アダルトコンテンツを除外してください
+   AniList API のクエリに isAdult: false を追加する
+
+タイトルの表示について修正をお願いします。
+
+1. デフォルトのタイトル表示を日本語（romaji or native）にしてください
+   AniList API の title フィールドには romaji・english・native があります
+   優先順位: native（日本語）→ romaji → english の順でフォールバック
+
+2. ユーザーが英語表示に切り替えられるように設定を追加してください
+   - ヘッダーかサイドバーに「JA / EN」の切り替えボタンを置く
+   - 設定は localStorage に保存して、次回アクセス時も維持する

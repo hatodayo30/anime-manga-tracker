@@ -193,4 +193,7 @@ function renderProgressEditor(item) {
   return wrapper;
 }
 
-document.addEventListener('DOMContentLoaded', initLibraryPage);
+window.authReadyPromise.then((user) => {
+  if (!user) return; // 未ログイン: auth.js がログイン画面へリダイレクト中
+  initLibraryPage();
+});

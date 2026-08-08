@@ -15,7 +15,7 @@ import (
 // ErrNotFound はレコードが見つからない場合に返される。
 var ErrNotFound = errors.New("record not found")
 
-// RecordRepository は records テーブルへのアクセスを提供する。
+// RecordRepository は records テーブルへのアクセスを提供する。全操作はユーザーIDでスコープされる。
 type RecordRepository struct {
 	pool *pgxpool.Pool
 }
@@ -42,17 +42,18 @@ func scanRecord(row pgx.Row) (*model.Record, error) {
 }
 
 // List は種別・ステータスで記録を絞り込んで返す。どちらも空文字なら絞り込まない。
-func (r *RecordRepository) List(ctx context.Context, mediaType model.MediaType, status model.Status) ([]*model.Record, error) {
+func (r *RecordRepository) List(ctx context.Context, userID int64, mediaType model.MediaType, status model.Status) ([]*model.Record, error) {
 	query := fmt.Sprintf(`
 		SELECT %s FROM records
-		WHERE ($1 = '' OR media_type = $1)
-		  AND ($2 = '' OR status = $2)
+		WHERE user_id = $1
+		  AND ($2 = '' OR media_type = $2)
+		  AND ($3 = '' OR status = $3)
 		ORDER BY
 		  CASE WHEN next_airing_at IS NULL THEN 1 ELSE 0 END, next_airing_at ASC,
 		  created_at DESC
 	`, recordColumns)
 
-	rows, err := r.pool.Query(ctx, query, string(mediaType), string(status))
+	rows, err := r.pool.Query(ctx, query, userID, string(mediaType), string(status))
 	if err != nil {
 		return nil, fmt.Errorf("query records: %w", err)
 	}
@@ -70,11 +71,11 @@ func (r *RecordRepository) List(ctx context.Context, mediaType model.MediaType, 
 }
 
 // Upsert は AniList ID + 種別が一致する記録があれば更新、なければ新規作成する。
-func (r *RecordRepository) Upsert(ctx context.Context, in model.NewRecordInput) (*model.Record, error) {
+func (r *RecordRepository) Upsert(ctx context.Context, userID int64, in model.NewRecordInput) (*model.Record, error) {
 	query := fmt.Sprintf(`
-		INSERT INTO records (anilist_id, media_type, title, cover_image_url, genres, status, progress, total, next_airing_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8)
-		ON CONFLICT (anilist_id, media_type)
+		INSERT INTO records (user_id, anilist_id, media_type, title, cover_image_url, genres, status, progress, total, next_airing_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9)
+		ON CONFLICT (user_id, anilist_id, media_type)
 		DO UPDATE SET status = EXCLUDED.status, next_airing_at = EXCLUDED.next_airing_at, updated_at = now()
 		RETURNING %s
 	`, recordColumns)
@@ -86,7 +87,7 @@ func (r *RecordRepository) Upsert(ctx context.Context, in model.NewRecordInput) 
 	}
 
 	row := r.pool.QueryRow(ctx, query,
-		in.AniListID, in.MediaType, in.Title, in.CoverImageURL, in.Genres, in.Status, in.Total, nextAiringAt,
+		userID, in.AniListID, in.MediaType, in.Title, in.CoverImageURL, in.Genres, in.Status, in.Total, nextAiringAt,
 	)
 	rec, err := scanRecord(row)
 	if err != nil {
@@ -95,18 +96,18 @@ func (r *RecordRepository) Upsert(ctx context.Context, in model.NewRecordInput) 
 	return rec, nil
 }
 
-// Update は指定IDの記録のステータス/進捗を部分更新する。
-func (r *RecordRepository) Update(ctx context.Context, id int64, in model.UpdateRecordInput) (*model.Record, error) {
+// Update は指定IDの記録のステータス/進捗を部分更新する。他ユーザーの記録は更新できない。
+func (r *RecordRepository) Update(ctx context.Context, userID, id int64, in model.UpdateRecordInput) (*model.Record, error) {
 	query := fmt.Sprintf(`
 		UPDATE records SET
-			status = COALESCE($2, status),
-			progress = COALESCE($3, progress),
+			status = COALESCE($3, status),
+			progress = COALESCE($4, progress),
 			updated_at = now()
-		WHERE id = $1
+		WHERE id = $1 AND user_id = $2
 		RETURNING %s
 	`, recordColumns)
 
-	row := r.pool.QueryRow(ctx, query, id, in.Status, in.Progress)
+	row := r.pool.QueryRow(ctx, query, id, userID, in.Status, in.Progress)
 	rec, err := scanRecord(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

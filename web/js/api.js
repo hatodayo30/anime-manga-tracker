@@ -36,4 +36,22 @@ const api = {
   searchAniList({ type, q = '' }) {
     return request('/search' + buildQuery({ type, q }));
   },
+  seasonAnime() {
+    return request('/home/season-anime');
+  },
+  trending() {
+    return request('/home/trending');
+  },
+  getMe() {
+    return request('/auth/me');
+  },
+  signup({ email, password }) {
+    return request('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) });
+  },
+  login({ email, password }) {
+    return request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+  },
+  logout() {
+    return request('/auth/logout', { method: 'POST' });
+  },
 };
