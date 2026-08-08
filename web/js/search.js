@@ -50,7 +50,8 @@ async function runSearch() {
       api.searchAniList({ type: tab, q: query }),
       api.listRecords({ type: tab }),
     ]);
-    results = searchResults;
+    // 検索前（クエリ未入力）は AniList の人気順トップ5をデフォルト表示する。
+    results = query.trim() === '' ? searchResults.slice(0, 5) : searchResults;
     libraryByAniListId = new Map(libraryRecords.map((r) => [r.anilistId, r]));
   } catch (err) {
     container.replaceChildren(el('p', { className: 'text-muted' }, `検索に失敗しました: ${err.message}`));
@@ -80,7 +81,7 @@ function renderResults(container, results, libraryByAniListId) {
     const genreTags = el(
       'div',
       { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } },
-      item.genres.map((g) => el('span', { className: 'tag tag-neutral', style: { fontSize: '10px', padding: '2px 7px' } }, g))
+      item.genres.map((g) => el('span', { className: 'tag tag-neutral', style: { fontSize: '10px', padding: '2px 7px' } }, translateGenre(g)))
     );
 
     const makeStatusBtn = (status, label) =>

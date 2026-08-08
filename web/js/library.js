@@ -92,7 +92,7 @@ function renderGenreChips() {
           render();
         },
       },
-      g
+      translateGenre(g)
     )
   );
   container.replaceChildren(el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } }, chips));
@@ -124,7 +124,7 @@ function renderLibraryCard(item) {
   const genreTags = el(
     'div',
     { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' } },
-    item.genres.map((g) => el('span', { className: 'tag tag-neutral' }, g))
+    item.genres.map((g) => el('span', { className: 'tag tag-neutral' }, translateGenre(g)))
   );
 
   const header = el('div', { style: { display: 'flex', gap: 'var(--space-3)' } }, [

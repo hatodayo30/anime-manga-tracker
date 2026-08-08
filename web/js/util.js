@@ -78,6 +78,55 @@ function formatCountdown(nextAiringAt) {
   return `あと${Math.ceil(hours / 24)}日`;
 }
 
+// AniList のジャンル名（英語）→ 表示用の日本語ラベル。未知のジャンルはそのまま表示する。
+const GENRE_JA = {
+  Action: 'アクション',
+  Adventure: '冒険',
+  Comedy: 'コメディ',
+  Drama: 'ドラマ',
+  Ecchi: 'エッチ',
+  Fantasy: 'ファンタジー',
+  Horror: 'ホラー',
+  'Mahou Shoujo': '魔法少女',
+  Mecha: 'ロボット',
+  Music: '音楽',
+  Mystery: 'ミステリー',
+  Psychological: 'サイコロジカル',
+  Romance: '恋愛',
+  'Sci-Fi': 'SF',
+  'Slice of Life': '日常',
+  Sports: 'スポーツ',
+  Supernatural: '超自然',
+  Thriller: 'スリラー',
+};
+
+function translateGenre(genre) {
+  return GENRE_JA[genre] || genre;
+}
+
+const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
+
+// nextAiringAt（unix秒 or ISO文字列）から「木 25:00」のような表示用ラベルを作る。
+// 24時以降（深夜アニメの慣例表記）は前日の曜日として扱う。
+function formatWeekday(nextAiringAt) {
+  if (!nextAiringAt) return '';
+  const ms = typeof nextAiringAt === 'number' ? nextAiringAt * 1000 : new Date(nextAiringAt).getTime();
+  const d = new Date(ms);
+  let hour = d.getHours();
+  let dayIndex = d.getDay();
+  if (hour < 4) {
+    hour += 24;
+    dayIndex = (dayIndex + 6) % 7;
+  }
+  const minute = String(d.getMinutes()).padStart(2, '0');
+  return `${WEEKDAY_JA[dayIndex]} ${hour}:${minute}`;
+}
+
+function formatScore(score) {
+  if (score == null) return null;
+  return (score / 10).toFixed(1);
+}
+
 function unitFor(mediaType) {
   return mediaType === 'anime' ? '話' : '巻';
 }

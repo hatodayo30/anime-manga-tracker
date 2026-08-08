@@ -3,11 +3,15 @@ package anilist
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/model"
 )
+
+// AniList の description は asHtml:false でも <br> や <i> などのタグが残ることがあるため取り除く。
+var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
 // SearchResult は検索結果として画面に返す1作品分の情報。
 type SearchResult struct {
@@ -17,20 +21,38 @@ type SearchResult struct {
 	CoverImageURL string   `json:"coverImageUrl"`
 	Genres        []string `json:"genres"`
 	Total         *int     `json:"total"` // アニメ: 話数 / 漫画: 巻数相当（chapters）
+	Score         *int     `json:"score,omitempty"`    // AniListのaverageScore（0-100）
+	Synopsis      string   `json:"synopsis,omitempty"` // あらすじ（HTMLタグ除去済み）
 	NextAiringAt  *int64   `json:"nextAiringAt,omitempty"` // unix seconds
+	NextEpisode   *int     `json:"nextEpisode,omitempty"`  // 次に放送される話数
 }
 
-const searchQuery = `
-query ($search: String, $type: MediaType) {
-  Page(page: 1, perPage: 24) {
-    media(search: $search, type: $type, sort: [POPULARITY_DESC], isAdult: false) {
+const mediaFields = `
       id
       title { romaji native english }
       coverImage { medium }
       genres
       episodes
       chapters
-      nextAiringEpisode { airingAt }
+      averageScore
+      description(asHtml: false)
+      nextAiringEpisode { airingAt episode }
+`
+
+const searchQuery = `
+query ($search: String, $type: MediaType) {
+  Page(page: 1, perPage: 24) {
+    media(search: $search, type: $type, sort: [POPULARITY_DESC], isAdult: false) {` + mediaFields + `
+    }
+  }
+}
+`
+
+// popularQuery は検索語なしで人気順の一覧を返す（検索欄が空のときのデフォルト表示用）。
+const popularQuery = `
+query ($type: MediaType) {
+  Page(page: 1, perPage: 24) {
+    media(type: $type, sort: [POPULARITY_DESC], isAdult: false) {` + mediaFields + `
     }
   }
 }
@@ -48,15 +70,18 @@ type mediaCoverImage struct {
 
 type nextAiringEpisode struct {
 	AiringAt int64 `json:"airingAt"`
+	Episode  int   `json:"episode"`
 }
 
 type media struct {
-	ID                int               `json:"id"`
-	Title             mediaTitle        `json:"title"`
-	CoverImage        mediaCoverImage   `json:"coverImage"`
-	Genres            []string          `json:"genres"`
-	Episodes          *int              `json:"episodes"`
-	Chapters          *int              `json:"chapters"`
+	ID                int                `json:"id"`
+	Title             mediaTitle         `json:"title"`
+	CoverImage        mediaCoverImage    `json:"coverImage"`
+	Genres            []string           `json:"genres"`
+	Episodes          *int               `json:"episodes"`
+	Chapters          *int               `json:"chapters"`
+	AverageScore      *int               `json:"averageScore"`
+	Description       *string            `json:"description"`
 	NextAiringEpisode *nextAiringEpisode `json:"nextAiringEpisode"`
 }
 
@@ -69,13 +94,7 @@ type pageResponse struct {
 const seasonQuery = `
 query ($season: MediaSeason, $year: Int) {
   Page(page: 1, perPage: 12) {
-    media(season: $season, seasonYear: $year, type: ANIME, sort: POPULARITY_DESC) {
-      id
-      title { romaji native english }
-      coverImage { medium }
-      genres
-      episodes
-      nextAiringEpisode { airingAt }
+    media(season: $season, seasonYear: $year, type: ANIME, sort: POPULARITY_DESC, isAdult: false) {` + mediaFields + `
     }
   }
 }
@@ -84,12 +103,7 @@ query ($season: MediaSeason, $year: Int) {
 const trendingQuery = `
 query {
   Page(page: 1, perPage: 10) {
-    media(type: ANIME, sort: POPULARITY_DESC) {
-      id
-      title { romaji native english }
-      coverImage { medium }
-      genres
-      episodes
+    media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {` + mediaFields + `
     }
   }
 }
@@ -102,6 +116,16 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// cleanSynopsis は AniList の description に含まれる改行の連続や前後の空白を整える。
+func cleanSynopsis(desc *string) string {
+	if desc == nil {
+		return ""
+	}
+	s := htmlTagPattern.ReplaceAllString(*desc, " ")
+	s = strings.Join(strings.Fields(s), " ")
+	return strings.TrimSpace(s)
 }
 
 func toSearchResults(mediaType model.MediaType, list []media) []SearchResult {
@@ -122,10 +146,14 @@ func toSearchResults(mediaType model.MediaType, list []media) []SearchResult {
 			CoverImageURL: m.CoverImage.Medium,
 			Genres:        m.Genres,
 			Total:         total,
+			Score:         m.AverageScore,
+			Synopsis:      cleanSynopsis(m.Description),
 		}
 		if m.NextAiringEpisode != nil {
 			at := m.NextAiringEpisode.AiringAt
 			result.NextAiringAt = &at
+			ep := m.NextAiringEpisode.Episode
+			result.NextEpisode = &ep
 		}
 		results = append(results, result)
 	}
@@ -178,12 +206,20 @@ func (c *Client) Search(ctx context.Context, query string, mediaType model.Media
 		return nil, fmt.Errorf("invalid media type: %s", mediaType)
 	}
 
-	var resp pageResponse
-	err := c.do(ctx, searchQuery, map[string]any{
+	// 検索語が空のときは popularQuery（検索語なしの人気順一覧）を使う。
+	// AniList は search:"" では0件を返すため、素の検索クエリでは空状態を表現できない。
+	q := searchQuery
+	vars := map[string]any{
 		"search": query,
 		"type":   strings.ToUpper(string(mediaType)),
-	}, &resp)
-	if err != nil {
+	}
+	if strings.TrimSpace(query) == "" {
+		q = popularQuery
+		vars = map[string]any{"type": strings.ToUpper(string(mediaType))}
+	}
+
+	var resp pageResponse
+	if err := c.do(ctx, q, vars, &resp); err != nil {
 		return nil, err
 	}
 
