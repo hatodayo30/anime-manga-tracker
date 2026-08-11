@@ -25,6 +25,7 @@ type SearchResult struct {
 	Synopsis      string   `json:"synopsis,omitempty"` // あらすじ（HTMLタグ除去済み）
 	NextAiringAt  *int64   `json:"nextAiringAt,omitempty"` // unix seconds
 	NextEpisode   *int     `json:"nextEpisode,omitempty"`  // 次に放送される話数
+	AiringStatus  string   `json:"airingStatus,omitempty"` // AniListのstatus（RELEASING/FINISHED等）
 }
 
 const mediaFields = `
@@ -36,6 +37,7 @@ const mediaFields = `
       chapters
       averageScore
       description(asHtml: false)
+      status
       nextAiringEpisode { airingAt episode }
 `
 
@@ -82,6 +84,7 @@ type media struct {
 	Chapters          *int               `json:"chapters"`
 	AverageScore      *int               `json:"averageScore"`
 	Description       *string            `json:"description"`
+	Status            string             `json:"status"`
 	NextAiringEpisode *nextAiringEpisode `json:"nextAiringEpisode"`
 }
 
@@ -104,6 +107,17 @@ const trendingQuery = `
 query {
   Page(page: 1, perPage: 10) {
     media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {` + mediaFields + `
+    }
+  }
+}
+`
+
+// byIDsQuery はライブラリに保存済みの作品を、AniListの最新情報（総話数・放送状況・現在の話数）で
+// 再取得するために使う。id_in で複数件をまとめて取得する。
+const byIDsQuery = `
+query ($ids: [Int], $type: MediaType) {
+  Page(page: 1, perPage: 50) {
+    media(id_in: $ids, type: $type) {` + mediaFields + `
     }
   }
 }
@@ -148,6 +162,7 @@ func toSearchResults(mediaType model.MediaType, list []media) []SearchResult {
 			Total:         total,
 			Score:         m.AverageScore,
 			Synopsis:      cleanSynopsis(m.Description),
+			AiringStatus:  m.Status,
 		}
 		if m.NextAiringEpisode != nil {
 			at := m.NextAiringEpisode.AiringAt
@@ -198,6 +213,33 @@ func (c *Client) TrendingAnime(ctx context.Context) ([]SearchResult, error) {
 		return nil, err
 	}
 	return toSearchResults(model.MediaTypeAnime, resp.Page.Media), nil
+}
+
+// MediaByIDs は AniList の作品IDリストから最新情報をまとめて取得する。
+// マイライブラリ画面で、保存済みレコードの総話数・放送状況・現在の話数を最新化するために使う。
+func (c *Client) MediaByIDs(ctx context.Context, ids []int64, mediaType model.MediaType) ([]SearchResult, error) {
+	if !mediaType.Valid() {
+		return nil, fmt.Errorf("invalid media type: %s", mediaType)
+	}
+	if len(ids) == 0 {
+		return []SearchResult{}, nil
+	}
+
+	intIDs := make([]int, len(ids))
+	for i, id := range ids {
+		intIDs[i] = int(id)
+	}
+
+	var resp pageResponse
+	err := c.do(ctx, byIDsQuery, map[string]any{
+		"ids":  intIDs,
+		"type": strings.ToUpper(string(mediaType)),
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return toSearchResults(mediaType, resp.Page.Media), nil
 }
 
 // Search は作品名で AniList を検索する。mediaType は model.MediaTypeAnime / MediaTypeManga。

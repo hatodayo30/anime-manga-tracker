@@ -61,6 +61,7 @@ func run() error {
 
 	// ログイン不要（公開データ）
 	mux.HandleFunc("GET /api/search", searchHandler.Search)
+	mux.HandleFunc("GET /api/anilist/media", searchHandler.ByIDs)
 	mux.HandleFunc("GET /api/home/season-anime", homeHandler.SeasonAnime)
 	mux.HandleFunc("GET /api/home/trending", homeHandler.Trending)
 

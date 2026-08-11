@@ -131,17 +131,13 @@ function unitFor(mediaType) {
   return mediaType === 'anime' ? '話' : '巻';
 }
 
-function progressLabel(item) {
-  const unit = unitFor(item.mediaType);
-  return item.total ? `${item.progress}${unit} / ${item.total}${unit}` : `${item.progress}${unit}まで`;
-}
-
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
     if (key === 'className') node.className = value;
     else if (key === 'style') Object.assign(node.style, value);
     else if (key.startsWith('on')) node.addEventListener(key.slice(2).toLowerCase(), value);
+    else if (typeof value === 'boolean') node[key] = value; // disabled, checked, autofocus など
     else node.setAttribute(key, value);
   }
   for (const child of [].concat(children)) {

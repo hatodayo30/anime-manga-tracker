@@ -8,8 +8,9 @@ const libState = {
   type: 'anime',
   status: 'active',
   activeGenres: [],
-  editingId: null,
   allRecords: [], // 現在の type の全ステータス分
+  aniListInfo: new Map(), // anilistId -> AniList最新情報（総話数・放送状況・次話）。アニメのみ。
+  pendingIds: new Set(), // 更新中のレコードID。連打で古いprogressのまま二重更新するのを防ぐ。
 };
 
 function initLibraryPage() {
@@ -63,6 +64,18 @@ async function loadAndRender() {
     container.replaceChildren(el('p', { className: 'text-muted' }, `読み込みに失敗しました: ${err.message}`));
     return;
   }
+
+  libState.aniListInfo = new Map();
+  if (libState.type === 'anime' && libState.allRecords.length > 0) {
+    try {
+      const ids = libState.allRecords.map((r) => r.anilistId);
+      const fresh = await api.mediaByIds({ type: 'anime', ids });
+      libState.aniListInfo = new Map(fresh.map((f) => [f.anilistId, f]));
+    } catch {
+      // AniList側の取得に失敗しても、保存済みの記録だけで表示を続ける。
+    }
+  }
+
   render();
 }
 
@@ -135,62 +148,101 @@ function renderLibraryCard(item) {
   const children = [header];
 
   if (item.status === 'active') {
-    children.push(libState.editingId === item.id ? renderProgressEditor(item) : renderProgressDisplay(item));
+    children.push(renderProgressBlock(item));
   }
 
   return el('div', { className: 'card elev-sm' }, children);
 }
 
-function renderProgressDisplay(item) {
-  return el(
-    'div',
-    {
-      style: { marginTop: '4px', fontSize: '12px', color: 'color-mix(in srgb, var(--color-text) 70%, transparent)', cursor: 'pointer' },
-      onClick: () => {
-        libState.editingId = item.id;
-        renderResults();
-      },
-    },
-    progressLabel(item)
-  );
+// アニメが「放送中」のとき、AniListのnextAiringEpisode（次に放送される話数）から
+// 現在放送済みの話数（= 次話 - 1）を導く。
+function currentAiringEpisode(freshInfo) {
+  if (!freshInfo || freshInfo.airingStatus !== 'RELEASING' || freshInfo.nextEpisode == null) return null;
+  return freshInfo.nextEpisode - 1;
 }
 
-function renderProgressEditor(item) {
+function renderProgressBlock(item) {
   const unit = unitFor(item.mediaType);
-  const suffix = item.total ? `${unit} / ${item.total}${unit}` : `${unit}まで`;
+  const freshInfo = libState.aniListInfo.get(item.anilistId);
+  const total = freshInfo?.total ?? item.total ?? null;
+  const airingEp = item.mediaType === 'anime' ? currentAiringEpisode(freshInfo) : null;
 
-  const input = el('input', {
-    className: 'input input-progress',
-    type: 'number',
-    min: '0',
-    value: item.progress,
-  });
+  const rows = [];
 
-  const commit = async () => {
-    const n = Math.max(0, parseInt(input.value, 10) || 0);
-    libState.editingId = null;
-    if (n !== item.progress) {
-      try {
-        await api.updateRecord(item.id, { progress: n });
-        item.progress = n;
-      } catch (err) {
-        alert(`更新に失敗しました: ${err.message}`);
-      }
-    }
-    renderResults();
-  };
+  if (airingEp != null) {
+    let text = `${item.progress}${unit}視聴 / 現在${airingEp}${unit}放送中`;
+    if (total) text += ` / 全${total}${unit}`;
+    rows.push(el('div', { className: 'text-muted', style: { fontSize: '12px' } }, text));
+  }
 
-  input.addEventListener('blur', commit);
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') input.blur();
-  });
+  const countLabel = total ? `${item.progress} / ${total}${unit}` : `${item.progress}${unit} / ？${unit}`;
 
-  const wrapper = el('div', { style: { display: 'flex', alignItems: 'baseline', gap: '3px', marginTop: '4px', fontSize: '12px' } }, [
-    input,
-    el('span', {}, suffix),
+  // 放送中は、まだ放送されていない話数までは視聴済みにできないよう、
+  // 「＋」の上限を現在放送済み話数（airingEp）に制限する。放送終了後は総話数(total)が上限。
+  const progressCap = airingEp != null ? airingEp : total;
+
+  const pending = libState.pendingIds.has(item.id);
+  const minusBtn = el(
+    'button',
+    {
+      className: 'btn btn-secondary btn-step',
+      disabled: pending || item.progress <= 0,
+      onClick: () => adjustProgress(item, -1, total),
+    },
+    '－'
+  );
+  const plusBtn = el(
+    'button',
+    {
+      className: 'btn btn-secondary btn-step',
+      disabled: pending || (progressCap != null && item.progress >= progressCap),
+      onClick: () => adjustProgress(item, 1, total),
+    },
+    '＋'
+  );
+
+  const stepperRow = el('div', { className: 'progress-row' }, [
+    minusBtn,
+    el('div', { className: 'progress-count' }, countLabel),
+    plusBtn,
   ]);
-  queueMicrotask(() => input.focus());
-  return wrapper;
+  rows.push(stepperRow);
+
+  if (total) {
+    const pct = Math.min(100, Math.round((item.progress / total) * 100));
+    rows.push(
+      el('div', { className: 'progress-bar' }, [el('div', { className: 'progress-bar-fill', style: { width: `${pct}%` } })])
+    );
+    rows.push(el('div', { className: 'progress-pct' }, `${pct}%`));
+  }
+
+  return el('div', { className: 'progress-block' }, rows);
+}
+
+async function adjustProgress(item, delta, total) {
+  if (libState.pendingIds.has(item.id)) return;
+
+  const n = Math.max(0, item.progress + delta);
+  if (n === item.progress) return;
+
+  const body = { progress: n };
+  if (total != null && n >= total) {
+    body.status = 'done';
+  }
+
+  libState.pendingIds.add(item.id);
+  renderResults(); // ボタンを即座に disabled にして連打による二重更新を防ぐ
+
+  try {
+    await api.updateRecord(item.id, body);
+  } catch (err) {
+    alert(`更新に失敗しました: ${err.message}`);
+    libState.pendingIds.delete(item.id);
+    renderResults();
+    return;
+  }
+  libState.pendingIds.delete(item.id);
+  await loadAndRender();
 }
 
 window.authReadyPromise.then((user) => {

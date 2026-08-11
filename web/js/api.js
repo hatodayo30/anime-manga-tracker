@@ -36,6 +36,10 @@ const api = {
   searchAniList({ type, q = '' }) {
     return request('/search' + buildQuery({ type, q }));
   },
+  mediaByIds({ type, ids }) {
+    if (ids.length === 0) return Promise.resolve([]);
+    return request('/anilist/media' + buildQuery({ type, ids: ids.join(',') }));
+  },
   seasonAnime() {
     return request('/home/season-anime');
   },
