@@ -123,6 +123,16 @@ query ($ids: [Int], $type: MediaType) {
 }
 `
 
+// byGenresQuery はおすすめ機能向けに、指定ジャンルのいずれかに合致する作品を人気順で取得する。
+const byGenresQuery = `
+query ($genres: [String], $type: MediaType) {
+  Page(page: 1, perPage: 30) {
+    media(genre_in: $genres, type: $type, sort: [POPULARITY_DESC], isAdult: false) {` + mediaFields + `
+    }
+  }
+}
+`
+
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if v != "" {
@@ -234,6 +244,27 @@ func (c *Client) MediaByIDs(ctx context.Context, ids []int64, mediaType model.Me
 	err := c.do(ctx, byIDsQuery, map[string]any{
 		"ids":  intIDs,
 		"type": strings.ToUpper(string(mediaType)),
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return toSearchResults(mediaType, resp.Page.Media), nil
+}
+
+// ByGenres はおすすめ機能向けに、指定ジャンルのいずれかに合致する作品を人気順で取得する。
+func (c *Client) ByGenres(ctx context.Context, genres []string, mediaType model.MediaType) ([]SearchResult, error) {
+	if !mediaType.Valid() {
+		return nil, fmt.Errorf("invalid media type: %s", mediaType)
+	}
+	if len(genres) == 0 {
+		return []SearchResult{}, nil
+	}
+
+	var resp pageResponse
+	err := c.do(ctx, byGenresQuery, map[string]any{
+		"genres": genres,
+		"type":   strings.ToUpper(string(mediaType)),
 	}, &resp)
 	if err != nil {
 		return nil, err

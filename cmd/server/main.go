@@ -15,6 +15,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
 	"github.com/hatodayo30/anime-manga-tracker/internal/repository"
 	"github.com/hatodayo30/anime-manga-tracker/internal/service"
+	"github.com/hatodayo30/anime-manga-tracker/internal/translate"
 )
 
 func main() {
@@ -52,6 +53,9 @@ func run() error {
 	searchHandler := handler.NewSearchHandler(anilistClient)
 	homeHandler := handler.NewHomeHandler(anilistClient)
 
+	translateClient := translate.NewClient()
+	translateHandler := handler.NewTranslateHandler(translateClient)
+
 	mux := http.NewServeMux()
 
 	// ログイン必須（自分のライブラリ）
@@ -62,8 +66,10 @@ func run() error {
 	// ログイン不要（公開データ）
 	mux.HandleFunc("GET /api/search", searchHandler.Search)
 	mux.HandleFunc("GET /api/anilist/media", searchHandler.ByIDs)
+	mux.HandleFunc("GET /api/recommendations", searchHandler.Recommendations)
 	mux.HandleFunc("GET /api/home/season-anime", homeHandler.SeasonAnime)
 	mux.HandleFunc("GET /api/home/trending", homeHandler.Trending)
+	mux.HandleFunc("GET /api/translate", translateHandler.Translate)
 
 	// 認証
 	mux.HandleFunc("POST /api/auth/signup", authHandler.SignUp)

@@ -76,25 +76,27 @@ function openWorkModal({ item, mediaType, status, user, onStatusChange }) {
       labels[key]
     );
 
+  const synopsisEl = el(
+    'p',
+    {
+      className: 'text-muted',
+      style: {
+        fontSize: '13px',
+        lineHeight: '1.6',
+        marginBottom: '18px',
+        display: '-webkit-box',
+        WebkitLineClamp: '3',
+        WebkitBoxOrient: 'vertical',
+        overflow: 'hidden',
+      },
+    },
+    item.synopsis || 'あらすじは未登録です。'
+  );
+
   const body = el('div', { style: { padding: '20px' } }, [
     el('div', { className: 'card-title', style: { fontSize: '18px', marginBottom: '6px' } }, item.title),
     genreTags,
-    el(
-      'p',
-      {
-        className: 'text-muted',
-        style: {
-          fontSize: '13px',
-          lineHeight: '1.6',
-          marginBottom: '18px',
-          display: '-webkit-box',
-          WebkitLineClamp: '3',
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
-        },
-      },
-      item.synopsis || 'あらすじは未登録です。'
-    ),
+    synopsisEl,
     el('div', { style: { display: 'flex', gap: '8px' } }, [
       makeStatusBtn('done'),
       makeStatusBtn('active'),
@@ -111,12 +113,25 @@ function openWorkModal({ item, mediaType, status, user, onStatusChange }) {
     ]
   );
 
-  modalOverlayEl = el(
-    'div',
-    { className: 'modal-overlay', onClick: () => closeWorkModal() },
-    [dialog]
-  );
-  document.body.appendChild(modalOverlayEl);
+  const thisOverlay = el('div', { className: 'modal-overlay', onClick: () => closeWorkModal() }, [dialog]);
+  modalOverlayEl = thisOverlay;
+  document.body.appendChild(thisOverlay);
+
+  // AniListのあらすじは英語のみのため、表示言語が日本語のときはバックエンド経由で機械翻訳する。
+  // 開いた瞬間は原文（英語）のまま表示し、翻訳が終わったら静かに差し替える
+  // （「翻訳中…」のような一時表示は挟まない）。モーダルが閉じられた/差し替わった後に
+  // 古い翻訳結果が反映されないよう、参照を比較してから更新する。
+  if (item.synopsis && getLang() === 'ja') {
+    api
+      .translate({ text: item.synopsis, target: 'ja' })
+      .then((translated) => {
+        if (modalOverlayEl !== thisOverlay || !translated) return;
+        synopsisEl.textContent = translated;
+      })
+      .catch(() => {
+        // 翻訳失敗時は既に表示している原文のままでよい。
+      });
+  }
 }
 
 document.addEventListener('keydown', (e) => {

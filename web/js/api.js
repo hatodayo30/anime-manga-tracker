@@ -40,6 +40,15 @@ const api = {
     if (ids.length === 0) return Promise.resolve([]);
     return request('/anilist/media' + buildQuery({ type, ids: ids.join(',') }));
   },
+  recommendations({ type, genres }) {
+    if (genres.length === 0) return Promise.resolve([]);
+    return request('/recommendations' + buildQuery({ type, genres: genres.join(',') }));
+  },
+  async translate({ text, target = 'ja' }) {
+    if (!text) return '';
+    const { translated } = await request('/translate' + buildQuery({ text, target }));
+    return translated;
+  },
   seasonAnime() {
     return request('/home/season-anime');
   },
