@@ -69,7 +69,7 @@ func run() error {
 	mux.HandleFunc("GET /api/recommendations", searchHandler.Recommendations)
 	mux.HandleFunc("GET /api/home/season-anime", homeHandler.SeasonAnime)
 	mux.HandleFunc("GET /api/home/trending", homeHandler.Trending)
-	mux.HandleFunc("GET /api/translate", translateHandler.Translate)
+	mux.HandleFunc("POST /api/translate", translateHandler.Translate)
 
 	// 認証
 	mux.HandleFunc("POST /api/auth/signup", authHandler.SignUp)

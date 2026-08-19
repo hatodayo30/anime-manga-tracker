@@ -23,13 +23,13 @@ async function renderHome(user) {
   }
   const libraryByAniListId = new Map(libraryRecords.map((r) => [r.anilistId, r]));
 
-  renderStatBadges(user, libraryRecords);
+  renderStatBadges(user, libraryRecords, season);
   renderSeasonRow(season, libraryByAniListId, user);
   renderRanking(trending, libraryByAniListId, user);
   renderSideList(libraryRecords, season, user);
 }
 
-function renderStatBadges(user, libraryRecords) {
+function renderStatBadges(user, libraryRecords, season) {
   const container = document.getElementById('stat-badges');
   if (!user) {
     container.replaceChildren();
@@ -40,10 +40,12 @@ function renderStatBadges(user, libraryRecords) {
   const activeRecords = libraryRecords.filter((r) => r.status === 'active');
   const activeCount = activeRecords.length;
 
-  const withTotal = activeRecords.filter((r) => r.total);
-  const seasonRate = withTotal.length
+  // 今季消化率は「見てる」全体ではなく、今季放送中の作品に絞って計算する。
+  const seasonIds = new Set(season.map((s) => s.anilistId));
+  const seasonActive = activeRecords.filter((r) => seasonIds.has(r.anilistId) && r.total);
+  const seasonRate = seasonActive.length
     ? Math.round(
-        (withTotal.reduce((sum, r) => sum + r.progress / r.total, 0) / withTotal.length) * 100
+        (seasonActive.reduce((sum, r) => sum + r.progress / r.total, 0) / seasonActive.length) * 100
       )
     : 0;
 
@@ -58,8 +60,7 @@ function renderStatBadges(user, libraryRecords) {
 }
 
 function statusBadgeLabel(mediaType, status) {
-  const labels = { anime: { done: '見た', active: '見てる', want: '見たい' } };
-  return `${labels[mediaType][status]} ✓`;
+  return `${STATUS_LABELS[mediaType][status]} ✓`;
 }
 
 function renderSeasonRow(season, libraryByAniListId, user) {
@@ -146,7 +147,7 @@ function renderSideList(libraryRecords, season, user) {
     const thumb = thumbEl(item, { width: '32px', height: '32px', fontSize: 13 });
     thumb.style.borderRadius = 'var(--radius-sm)';
     rows.push(
-      el('div', { className: 'card elev-sm side-row' }, [
+      el('div', { className: 'card elev-sm side-row', onClick: () => openItemModal(item, item, user, () => renderHome(user)) }, [
         thumb,
         el('div', { className: 'card-title', style: { fontSize: '13px' } }, item.title),
         el('span', { className: 'tag tag-neutral', style: { flex: 'none' } }, '積み'),

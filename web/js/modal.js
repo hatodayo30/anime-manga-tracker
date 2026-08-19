@@ -1,9 +1,4 @@
 // modal.js — 作品詳細モーダル（ホームの今季アニメカード・人気ランキングから開く）
-const MODAL_STATUS_LABELS = {
-  anime: { done: '見た', active: '見てる', want: '見たい' },
-  manga: { done: '読んだ', active: '読んでる', want: '読みたい' },
-};
-
 let modalOverlayEl = null;
 
 function closeWorkModal() {
@@ -21,7 +16,7 @@ function closeWorkModal() {
 function openWorkModal({ item, mediaType, status, user, onStatusChange }) {
   closeWorkModal();
 
-  const labels = MODAL_STATUS_LABELS[mediaType];
+  const labels = STATUS_LABELS[mediaType];
 
   const setStatus = async (newStatus) => {
     if (!user) {

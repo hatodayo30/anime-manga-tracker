@@ -225,8 +225,13 @@ func (c *Client) TrendingAnime(ctx context.Context) ([]SearchResult, error) {
 	return toSearchResults(model.MediaTypeAnime, resp.Page.Media), nil
 }
 
+// byIDsPageSize は byIDsQuery の perPage と揃える。AniList の Page.perPage 上限が50のため、
+// それを超えるID数は複数リクエストに分割しないと51件目以降が黙って欠落する。
+const byIDsPageSize = 50
+
 // MediaByIDs は AniList の作品IDリストから最新情報をまとめて取得する。
 // マイライブラリ画面で、保存済みレコードの総話数・放送状況・現在の話数を最新化するために使う。
+// ids が50件を超える場合は50件ずつに分割して複数回リクエストする。
 func (c *Client) MediaByIDs(ctx context.Context, ids []int64, mediaType model.MediaType) ([]SearchResult, error) {
 	if !mediaType.Valid() {
 		return nil, fmt.Errorf("invalid media type: %s", mediaType)
@@ -235,21 +240,28 @@ func (c *Client) MediaByIDs(ctx context.Context, ids []int64, mediaType model.Me
 		return []SearchResult{}, nil
 	}
 
-	intIDs := make([]int, len(ids))
-	for i, id := range ids {
-		intIDs[i] = int(id)
+	results := make([]SearchResult, 0, len(ids))
+	for start := 0; start < len(ids); start += byIDsPageSize {
+		end := min(start+byIDsPageSize, len(ids))
+		chunk := ids[start:end]
+
+		intIDs := make([]int, len(chunk))
+		for i, id := range chunk {
+			intIDs[i] = int(id)
+		}
+
+		var resp pageResponse
+		err := c.do(ctx, byIDsQuery, map[string]any{
+			"ids":  intIDs,
+			"type": strings.ToUpper(string(mediaType)),
+		}, &resp)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, toSearchResults(mediaType, resp.Page.Media)...)
 	}
 
-	var resp pageResponse
-	err := c.do(ctx, byIDsQuery, map[string]any{
-		"ids":  intIDs,
-		"type": strings.ToUpper(string(mediaType)),
-	}, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return toSearchResults(mediaType, resp.Page.Media), nil
+	return results, nil
 }
 
 // ByGenres はおすすめ機能向けに、指定ジャンルのいずれかに合致する作品を人気順で取得する。

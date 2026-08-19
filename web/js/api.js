@@ -46,7 +46,7 @@ const api = {
   },
   async translate({ text, target = 'ja' }) {
     if (!text) return '';
-    const { translated } = await request('/translate' + buildQuery({ text, target }));
+    const { translated } = await request('/translate', { method: 'POST', body: JSON.stringify({ text, target }) });
     return translated;
   },
   seasonAnime() {

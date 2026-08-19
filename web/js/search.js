@@ -1,9 +1,4 @@
 // search.js — 検索・追加画面
-const STATUS_LABELS = {
-  anime: { done: '見た', active: '見てる', want: '見たい' },
-  manga: { done: '読んだ', active: '読んでる', want: '読みたい' },
-};
-
 const state = {
   tab: 'anime',
   query: '',

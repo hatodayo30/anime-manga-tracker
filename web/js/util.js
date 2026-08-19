@@ -1,4 +1,11 @@
 // util.js — 表示用の小さなヘルパー群
+
+// ステータス（見た/見てる/見たい 等）の表示ラベル。検索・ライブラリ・モーダル・ホームで共通利用する。
+const STATUS_LABELS = {
+  anime: { done: '見た', active: '見てる', want: '見たい' },
+  manga: { done: '読んだ', active: '読んでる', want: '読みたい' },
+};
+
 const THUMB_PALETTE = ['#b5abfc', '#9690c9', '#7972a9', '#5c5783', '#d2cefd', '#b5afe8', '#423e5d'];
 
 function colorForTitle(title) {
@@ -69,15 +76,6 @@ function initLangToggle() {
 
 initLangToggle();
 
-function formatCountdown(nextAiringAt) {
-  if (!nextAiringAt) return '';
-  const diff = new Date(nextAiringAt).getTime() - Date.now();
-  if (diff <= 0) return '放送中';
-  const hours = Math.ceil(diff / 3600000);
-  if (hours < 24) return `あと${hours}時間`;
-  return `あと${Math.ceil(hours / 24)}日`;
-}
-
 // AniList のジャンル名（英語）→ 表示用の日本語ラベル。未知のジャンルはそのまま表示する。
 const GENRE_JA = {
   Action: 'アクション',
@@ -105,21 +103,32 @@ function translateGenre(genre) {
 }
 
 const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
+const WEEKDAY_EN_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // nextAiringAt（unix秒 or ISO文字列）から「木 25:00」のような表示用ラベルを作る。
+// 放送時刻はJST（日本の深夜アニメ表記）前提のため、閲覧者のブラウザのタイムゾーンに関わらず
+// 常にAsia/Tokyoとして曜日・時刻を計算する。
 // 24時以降（深夜アニメの慣例表記）は前日の曜日として扱う。
 function formatWeekday(nextAiringAt) {
   if (!nextAiringAt) return '';
   const ms = typeof nextAiringAt === 'number' ? nextAiringAt * 1000 : new Date(nextAiringAt).getTime();
-  const d = new Date(ms);
-  let hour = d.getHours();
-  let dayIndex = d.getDay();
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Tokyo',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(ms);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+
+  let hour = Number(get('hour'));
+  let dayIndex = WEEKDAY_EN_SHORT.indexOf(get('weekday'));
   if (hour < 4) {
     hour += 24;
     dayIndex = (dayIndex + 6) % 7;
   }
-  const minute = String(d.getMinutes()).padStart(2, '0');
-  return `${WEEKDAY_JA[dayIndex]} ${hour}:${minute}`;
+  return `${WEEKDAY_JA[dayIndex]} ${hour}:${get('minute')}`;
 }
 
 function formatScore(score) {

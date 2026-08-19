@@ -1,9 +1,4 @@
 // library.js — マイライブラリ画面
-const LIB_STATUS_LABELS = {
-  anime: { done: '見た', active: '見てる', want: '見たい' },
-  manga: { done: '読んだ', active: '読んでる', want: '読みたい' },
-};
-
 const libState = {
   type: 'anime',
   status: 'active',
@@ -44,7 +39,7 @@ function syncTypeUI() {
 }
 
 function syncStatusUI() {
-  const labels = LIB_STATUS_LABELS[libState.type];
+  const labels = STATUS_LABELS[libState.type];
   const opts = document.querySelectorAll('#lib-status-tabs .seg-opt');
   const order = ['done', 'active', 'want'];
   opts.forEach((opt, i) => {
@@ -187,7 +182,7 @@ function renderProgressBlock(item) {
     {
       className: 'btn btn-secondary btn-step',
       disabled: pending || item.progress <= 0,
-      onClick: () => adjustProgress(item, -1, total),
+      onClick: () => adjustProgress(item, -1, total, progressCap),
     },
     '－'
   );
@@ -196,7 +191,7 @@ function renderProgressBlock(item) {
     {
       className: 'btn btn-secondary btn-step',
       disabled: pending || (progressCap != null && item.progress >= progressCap),
-      onClick: () => adjustProgress(item, 1, total),
+      onClick: () => adjustProgress(item, 1, total, progressCap),
     },
     '＋'
   );
@@ -219,10 +214,15 @@ function renderProgressBlock(item) {
   return el('div', { className: 'progress-block' }, rows);
 }
 
-async function adjustProgress(item, delta, total) {
+// progressCap: 放送中なら現在放送済み話数、それ以外は総話数（未定ならnull）。
+// UIのボタンはこの上限で disabled にしているが、ここでも同じ上限で clamp しておくことで、
+// 更新処理自体が上限を知らないまま呼ばれても未放送分まで視聴済みにしてしまわないようにする。
+async function adjustProgress(item, delta, total, progressCap) {
   if (libState.pendingIds.has(item.id)) return;
 
-  const n = Math.max(0, item.progress + delta);
+  let n = item.progress + delta;
+  if (delta > 0 && progressCap != null) n = Math.min(n, progressCap);
+  n = Math.max(0, n);
   if (n === item.progress) return;
 
   const body = { progress: n };
@@ -241,8 +241,13 @@ async function adjustProgress(item, delta, total) {
     renderResults();
     return;
   }
+
+  // AniListの最新情報（総話数・放送状況）は progress の変更では変わらないので、
+  // ライブラリ全体とAniList情報をまるごと再取得せず、ローカルの状態だけ更新して再描画する。
+  item.progress = n;
+  if (body.status) item.status = body.status;
   libState.pendingIds.delete(item.id);
-  await loadAndRender();
+  renderResults();
 }
 
 window.authReadyPromise.then((user) => {
