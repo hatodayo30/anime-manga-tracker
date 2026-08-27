@@ -16,16 +16,17 @@ var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 // SearchResult は検索結果として画面に返す1作品分の情報。
 type SearchResult struct {
 	AniListID     int64    `json:"anilistId"`
-	Title         string   `json:"title"`   // 表示優先順位: native → romaji → english
-	TitleEn       string   `json:"titleEn"` // 表示優先順位: english → romaji → native
+	Title         string   `json:"title"` // 日本作品: native（漢字/かな）優先。それ以外（KR/CN等）は english 優先。
 	CoverImageURL string   `json:"coverImageUrl"`
 	Genres        []string `json:"genres"`
-	Total         *int     `json:"total"` // アニメ: 話数 / 漫画: 巻数相当（chapters）
+	Total         *int     `json:"total"` // アニメ: 話数 / 漫画: 話数（chapters）。進捗の追跡単位。
+	Volumes       *int     `json:"volumes,omitempty"`  // 漫画の既刊巻数（AniList volumes）。参考情報として表示するのみで進捗追跡には使わない。
 	Score         *int     `json:"score,omitempty"`    // AniListのaverageScore（0-100）
 	Synopsis      string   `json:"synopsis,omitempty"` // あらすじ（HTMLタグ除去済み）
 	NextAiringAt  *int64   `json:"nextAiringAt,omitempty"` // unix seconds
 	NextEpisode   *int     `json:"nextEpisode,omitempty"`  // 次に放送される話数
 	AiringStatus  string   `json:"airingStatus,omitempty"` // AniListのstatus（RELEASING/FINISHED等）
+	Popularity    int      `json:"popularity"`             // AniListの人気値。複数の検索結果をマージして並べ替える際に使う
 }
 
 const mediaFields = `
@@ -35,9 +36,12 @@ const mediaFields = `
       genres
       episodes
       chapters
+      volumes
       averageScore
+      popularity
       description(asHtml: false)
       status
+      countryOfOrigin
       nextAiringEpisode { airingAt episode }
 `
 
@@ -82,9 +86,12 @@ type media struct {
 	Genres            []string           `json:"genres"`
 	Episodes          *int               `json:"episodes"`
 	Chapters          *int               `json:"chapters"`
+	Volumes           *int               `json:"volumes"`
 	AverageScore      *int               `json:"averageScore"`
+	Popularity        int                `json:"popularity"`
 	Description       *string            `json:"description"`
 	Status            string             `json:"status"`
+	CountryOfOrigin   string             `json:"countryOfOrigin"`
 	NextAiringEpisode *nextAiringEpisode `json:"nextAiringEpisode"`
 }
 
@@ -155,9 +162,16 @@ func cleanSynopsis(desc *string) string {
 func toSearchResults(mediaType model.MediaType, list []media) []SearchResult {
 	results := make([]SearchResult, 0, len(list))
 	for _, m := range list {
-		title := firstNonEmpty(m.Title.Native, m.Title.Romaji, m.Title.English)
-		titleEn := firstNonEmpty(m.Title.English, m.Title.Romaji, m.Title.Native)
-
+		// native は原語表記のため、日本作品なら漢字/かな、韓国・中国作品なら
+		// ハングル/簡体字になる。この場合、native (ハングル/簡体字) → 日本語UIでは
+		// 判読できないため、日本作品のときだけ native を優先し、それ以外（KR/CN等）は
+		// 広く読める英語タイトルを優先する。
+		var title string
+		if m.CountryOfOrigin == "" || m.CountryOfOrigin == "JP" {
+			title = firstNonEmpty(m.Title.Native, m.Title.Romaji, m.Title.English)
+		} else {
+			title = firstNonEmpty(m.Title.English, m.Title.Romaji, m.Title.Native)
+		}
 		total := m.Episodes
 		if mediaType == model.MediaTypeManga {
 			total = m.Chapters
@@ -166,13 +180,14 @@ func toSearchResults(mediaType model.MediaType, list []media) []SearchResult {
 		result := SearchResult{
 			AniListID:     int64(m.ID),
 			Title:         title,
-			TitleEn:       titleEn,
 			CoverImageURL: m.CoverImage.Medium,
 			Genres:        m.Genres,
 			Total:         total,
+			Volumes:       m.Volumes,
 			Score:         m.AverageScore,
 			Synopsis:      cleanSynopsis(m.Description),
 			AiringStatus:  m.Status,
+			Popularity:    m.Popularity,
 		}
 		if m.NextAiringEpisode != nil {
 			at := m.NextAiringEpisode.AiringAt
