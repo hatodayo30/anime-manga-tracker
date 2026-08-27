@@ -127,7 +127,7 @@ function renderRecommendCard(item) {
   const score = formatScore(item.score);
 
   const footer = el('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' } }, [
-    el('div', { className: 'card-title', style: { fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, displayTitle(item)),
+    el('div', { className: 'card-title', style: { fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, item.title),
   ]);
 
   const children = [thumb, footer, genreTags];
@@ -144,7 +144,7 @@ function renderRecommendCard(item) {
 
 function openRecommendModal(item) {
   openWorkModal({
-    item: { ...item, title: displayTitle(item) },
+    item,
     mediaType: recState.type,
     status: null,
     user: recState.user,

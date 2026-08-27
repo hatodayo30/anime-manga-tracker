@@ -112,11 +112,11 @@ function openWorkModal({ item, mediaType, status, user, onStatusChange }) {
   modalOverlayEl = thisOverlay;
   document.body.appendChild(thisOverlay);
 
-  // AniListのあらすじは英語のみのため、表示言語が日本語のときはバックエンド経由で機械翻訳する。
+  // AniListのあらすじは英語のみのため、バックエンド経由で日本語に機械翻訳する。
   // 開いた瞬間は原文（英語）のまま表示し、翻訳が終わったら静かに差し替える
   // （「翻訳中…」のような一時表示は挟まない）。モーダルが閉じられた/差し替わった後に
   // 古い翻訳結果が反映されないよう、参照を比較してから更新する。
-  if (item.synopsis && getLang() === 'ja') {
+  if (item.synopsis) {
     api
       .translate({ text: item.synopsis, target: 'ja' })
       .then((translated) => {

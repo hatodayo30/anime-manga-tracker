@@ -81,7 +81,7 @@ function renderSeasonRow(season, libraryByAniListId, user) {
       }
       children.push(
         el('div', { className: 'hrow-card-body' }, [
-          el('div', { className: 'card-title', style: { fontSize: '14px' } }, displayTitle(item)),
+          el('div', { className: 'card-title', style: { fontSize: '14px' } }, item.title),
           el(
             'div',
             { style: { display: 'flex', gap: '6px', marginTop: '6px' } },
@@ -115,7 +115,7 @@ function renderRanking(trending, libraryByAniListId, user) {
         el('div', { style: { fontFamily: 'var(--font-heading)', fontWeight: '700', fontSize: '18px', color: 'var(--color-accent)', width: '20px', flex: 'none' } }, String(i + 1)),
         thumb,
         el('div', { style: { flex: '1', minWidth: '0' } }, [
-          el('div', { className: 'card-title', style: { fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, displayTitle(item)),
+          el('div', { className: 'card-title', style: { fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, item.title),
         ]),
       ];
       if (record) {
@@ -160,7 +160,7 @@ function renderSideList(libraryRecords, season, user) {
     rows.push(
       el('div', { className: 'card elev-sm side-row', onClick: () => openItemModal(item, null, user, () => renderHome(user)) }, [
         thumb,
-        el('div', { className: 'card-title', style: { fontSize: '13px' } }, displayTitle(item)),
+        el('div', { className: 'card-title', style: { fontSize: '13px' } }, item.title),
         el('span', { className: 'tag tag-neutral', style: { flex: 'none' } }, '今季'),
       ])
     );
@@ -170,7 +170,7 @@ function renderSideList(libraryRecords, season, user) {
 
 function openItemModal(item, record, user, onStatusChange) {
   openWorkModal({
-    item: { ...item, title: displayTitle(item) },
+    item,
     mediaType: 'anime',
     status: record ? record.status : null,
     user,
