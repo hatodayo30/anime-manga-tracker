@@ -179,16 +179,31 @@ button.seg-opt { border: none; background: none; font: inherit; color: inherit; 
 .side-row { flex-direction: row; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; }
 .side-row .thumb { width: 32px; height: 32px; }
 
-/* — library: progress stepper — */
+/* — library: progress stepper + slider — */
 .progress-block { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .progress-row { display: flex; align-items: center; gap: 8px; }
 .btn-step {
   width: 22px; height: 22px; padding: 0; font-size: 13px; line-height: 1;
   border-color: var(--color-divider); flex: none;
 }
-.progress-count { font-size: 12px; color: color-mix(in srgb, var(--color-text) 75%, transparent); min-width: 52px; }
-.progress-bar { height: 6px; border-radius: 4px; background: var(--color-neutral-800); overflow: hidden; }
-.progress-bar-fill { height: 100%; background: var(--color-accent); border-radius: 4px; }
+.progress-count { font-size: 12px; color: color-mix(in srgb, var(--color-text) 75%, transparent); flex: 1; text-align: center; }
+.input-progress-edit { width: 52px; min-height: 24px; padding: 2px 6px; font-size: 12px; }
+
+.progress-slider-row { display: flex; align-items: center; gap: 8px; }
+.progress-slider {
+  flex: 1; appearance: none; height: 4px; border-radius: 4px;
+  background: var(--color-neutral-800); outline: none; cursor: pointer;
+}
+.progress-slider::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--color-accent); cursor: pointer; border: none;
+}
+.progress-slider::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--color-accent); cursor: pointer; border: none;
+}
+.progress-slider:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .progress-pct { font-size: 11px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
 
 /* — modal — */

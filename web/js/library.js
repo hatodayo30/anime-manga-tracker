@@ -4,8 +4,9 @@ const libState = {
   status: 'active',
   activeGenres: [],
   allRecords: [], // 現在の type の全ステータス分
-  aniListInfo: new Map(), // anilistId -> AniList最新情報（総話数・放送状況・次話）。アニメのみ。
+  aniListInfo: new Map(), // anilistId -> AniList最新情報（総話数・巻数・放送状況・次話）
   pendingIds: new Set(), // 更新中のレコードID。連打で古いprogressのまま二重更新するのを防ぐ。
+  editingId: null, // 話数を直接入力中のレコードID（大きな話数への一気ジャンプ用）
 };
 
 function initLibraryPage() {
@@ -14,6 +15,7 @@ function initLibraryPage() {
       libState.type = input.value;
       libState.activeGenres = [];
       syncTypeUI();
+      syncStatusUI(); // タブのラベル（見た/見てる/見たい ⇔ 読んだ/読んでる/読みたい）も種別に合わせて更新する
       loadAndRender();
     });
   }
@@ -61,10 +63,10 @@ async function loadAndRender() {
   }
 
   libState.aniListInfo = new Map();
-  if (libState.type === 'anime' && libState.allRecords.length > 0) {
+  if (libState.allRecords.length > 0) {
     try {
       const ids = libState.allRecords.map((r) => r.anilistId);
-      const fresh = await api.mediaByIds({ type: 'anime', ids });
+      const fresh = await api.mediaByIds({ type: libState.type, ids });
       libState.aniListInfo = new Map(fresh.map((f) => [f.anilistId, f]));
     } catch {
       // AniList側の取得に失敗しても、保存済みの記録だけで表示を続ける。
@@ -168,21 +170,72 @@ function renderProgressBlock(item) {
     let text = `${item.progress}${unit}視聴 / 現在${airingEp}${unit}放送中`;
     if (total) text += ` / 全${total}${unit}`;
     rows.push(el('div', { className: 'text-muted', style: { fontSize: '12px' } }, text));
+  } else if (item.mediaType === 'manga' && freshInfo?.volumes) {
+    // 話数（chapters）が進捗の追跡単位だが、参考情報として既刊巻数も表示する。
+    rows.push(el('div', { className: 'text-muted', style: { fontSize: '12px' } }, `既刊${freshInfo.volumes}巻`));
   }
 
-  const countLabel = total ? `${item.progress} / ${total}${unit}` : `${item.progress}${unit} / ？${unit}`;
-
   // 放送中は、まだ放送されていない話数までは視聴済みにできないよう、
-  // 「＋」の上限を現在放送済み話数（airingEp）に制限する。放送終了後は総話数(total)が上限。
+  // スライダー/直接入力の上限を現在放送済み話数（airingEp）に制限する。放送終了後は総話数(total)が上限。
   const progressCap = airingEp != null ? airingEp : total;
-
   const pending = libState.pendingIds.has(item.id);
+  const isEditing = libState.editingId === item.id;
+  const totalLabel = total ? `${total}${unit}` : `？${unit}`;
+
+  // 中央の数字表示：通常はクリックで直接入力に切り替わる表示、編集中は入力欄そのもの。
+  let countEl;
+  if (isEditing) {
+    // 話数が数百に及ぶ漫画では＋/－やスライダーの微調整だけでは非効率なため、
+    // クリックで直接入力に切り替えて一気にジャンプできるようにする。
+    const input = el('input', {
+      type: 'number',
+      min: '0',
+      className: 'input input-progress-edit',
+      value: item.progress,
+    });
+    const commit = () => {
+      const n = parseInt(input.value, 10);
+      libState.editingId = null;
+      if (!Number.isNaN(n)) {
+        commitProgress(item, n, total, progressCap);
+      } else {
+        renderResults();
+      }
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') input.blur();
+      if (e.key === 'Escape') {
+        libState.editingId = null;
+        renderResults();
+      }
+    });
+    queueMicrotask(() => {
+      input.focus();
+      input.select();
+    });
+    countEl = el('div', { style: { display: 'flex', alignItems: 'center', gap: '3px' } }, [input, el('span', { style: { fontSize: '12px' } }, `/ ${totalLabel}`)]);
+  } else {
+    countEl = el(
+      'span',
+      {
+        className: 'progress-count',
+        style: { cursor: 'pointer' },
+        onClick: () => {
+          libState.editingId = item.id;
+          renderResults();
+        },
+      },
+      `${item.progress} / ${totalLabel}`
+    );
+  }
+
   const minusBtn = el(
     'button',
     {
       className: 'btn btn-secondary btn-step',
-      disabled: pending || item.progress <= 0,
-      onClick: () => adjustProgress(item, -1, total, progressCap),
+      disabled: pending || isEditing || item.progress <= 0,
+      onClick: () => commitProgress(item, item.progress - 1, total, progressCap),
     },
     '－'
   );
@@ -190,24 +243,36 @@ function renderProgressBlock(item) {
     'button',
     {
       className: 'btn btn-secondary btn-step',
-      disabled: pending || (progressCap != null && item.progress >= progressCap),
-      onClick: () => adjustProgress(item, 1, total, progressCap),
+      disabled: pending || isEditing || (progressCap != null && item.progress >= progressCap),
+      onClick: () => commitProgress(item, item.progress + 1, total, progressCap),
     },
     '＋'
   );
 
-  const stepperRow = el('div', { className: 'progress-row' }, [
-    minusBtn,
-    el('div', { className: 'progress-count' }, countLabel),
-    plusBtn,
-  ]);
-  rows.push(stepperRow);
+  rows.push(el('div', { className: 'progress-row' }, [minusBtn, countEl, plusBtn]));
+
+  if (!isEditing && progressCap != null && progressCap > 0) {
+    // スライダーはドラッグ中（input）はローカル表示だけ更新し、離した時（change）にAPIへ反映する。
+    // ドラッグのたびにカード全体を再描画すると操作感が壊れるため、countEl のテキストを直接書き換える。
+    const slider = el('input', {
+      type: 'range',
+      min: '0',
+      max: String(progressCap),
+      value: String(Math.min(item.progress, progressCap)),
+      className: 'progress-slider',
+      disabled: pending,
+      oninput: (e) => {
+        countEl.textContent = `${e.target.value} / ${totalLabel}`;
+      },
+      onchange: (e) => {
+        commitProgress(item, parseInt(e.target.value, 10), total, progressCap);
+      },
+    });
+    rows.push(el('div', { className: 'progress-slider-row' }, [slider]));
+  }
 
   if (total) {
     const pct = Math.min(100, Math.round((item.progress / total) * 100));
-    rows.push(
-      el('div', { className: 'progress-bar' }, [el('div', { className: 'progress-bar-fill', style: { width: `${pct}%` } })])
-    );
     rows.push(el('div', { className: 'progress-pct' }, `${pct}%`));
   }
 
@@ -215,14 +280,13 @@ function renderProgressBlock(item) {
 }
 
 // progressCap: 放送中なら現在放送済み話数、それ以外は総話数（未定ならnull）。
-// UIのボタンはこの上限で disabled にしているが、ここでも同じ上限で clamp しておくことで、
+// スライダーのmax属性でも同じ上限にしているが、ここでも同じ上限で clamp しておくことで、
 // 更新処理自体が上限を知らないまま呼ばれても未放送分まで視聴済みにしてしまわないようにする。
-async function adjustProgress(item, delta, total, progressCap) {
+async function commitProgress(item, rawN, total, progressCap) {
   if (libState.pendingIds.has(item.id)) return;
 
-  let n = item.progress + delta;
-  if (delta > 0 && progressCap != null) n = Math.min(n, progressCap);
-  n = Math.max(0, n);
+  let n = Math.max(0, rawN);
+  if (progressCap != null) n = Math.min(n, progressCap);
   if (n === item.progress) return;
 
   const body = { progress: n };
