@@ -30,51 +30,11 @@ function thumbEl(item, { width, height, fontSize }) {
   if (item.coverImageUrl) {
     el.style.backgroundImage = `url("${item.coverImageUrl}")`;
   } else {
-    const title = displayTitle(item);
-    el.style.background = colorForTitle(title);
-    el.textContent = initialForTitle(title);
+    el.style.background = colorForTitle(item.title);
+    el.textContent = initialForTitle(item.title);
   }
   return el;
 }
-
-// タイトル表示言語（JA/EN）の設定。AniList検索結果は title(ja) / titleEn を両方持つ。
-const LANG_STORAGE_KEY = 'lang';
-
-function getLang() {
-  return localStorage.getItem(LANG_STORAGE_KEY) === 'en' ? 'en' : 'ja';
-}
-
-function setLang(lang) {
-  localStorage.setItem(LANG_STORAGE_KEY, lang);
-}
-
-function displayTitle(item) {
-  if (getLang() === 'en' && item.titleEn) return item.titleEn;
-  return item.title;
-}
-
-// サイドバーの id="lang-toggle" があるページで JA/EN 切り替えボタンを有効化する。
-function initLangToggle() {
-  const container = document.getElementById('lang-toggle');
-  if (!container) return;
-
-  const sync = () => {
-    for (const btn of container.querySelectorAll('[data-lang]')) {
-      btn.classList.toggle('checked', btn.dataset.lang === getLang());
-    }
-  };
-
-  container.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-lang]');
-    if (!btn || btn.dataset.lang === getLang()) return;
-    setLang(btn.dataset.lang);
-    location.reload();
-  });
-
-  sync();
-}
-
-initLangToggle();
 
 // AniList のジャンル名（英語）→ 表示用の日本語ラベル。未知のジャンルはそのまま表示する。
 const GENRE_JA = {
@@ -136,8 +96,133 @@ function formatScore(score) {
   return (score / 10).toFixed(1);
 }
 
-function unitFor(mediaType) {
-  return mediaType === 'anime' ? '話' : '巻';
+// 進捗の追跡単位。漫画もAniListのchaptersを使うため、アニメの話数と同じ「話」で統一する
+// （「巻」だと巻数と誤認しやすく、実際の値は話数のため不一致になっていた）。
+function unitFor() {
+  return '話';
+}
+
+// ひらがな/カタカナ→ローマ字（ヘボン式簡易版）。AniListの検索対象は漢字(native)/ローマ字(romaji)/
+// 英語(english)のみでひらがな・カタカナのタイトルは持たないため、かな入力でも検索できるよう
+// ローマ字に変換してから検索するために使う（完全な変換規則である必要はない）。
+const HIRAGANA_DIGRAPHS = {
+  きゃ: 'kya', きゅ: 'kyu', きょ: 'kyo',
+  しゃ: 'sha', しゅ: 'shu', しょ: 'sho',
+  ちゃ: 'cha', ちゅ: 'chu', ちょ: 'cho',
+  にゃ: 'nya', にゅ: 'nyu', にょ: 'nyo',
+  ひゃ: 'hya', ひゅ: 'hyu', ひょ: 'hyo',
+  みゃ: 'mya', みゅ: 'myu', みょ: 'myo',
+  りゃ: 'rya', りゅ: 'ryu', りょ: 'ryo',
+  ぎゃ: 'gya', ぎゅ: 'gyu', ぎょ: 'gyo',
+  じゃ: 'ja', じゅ: 'ju', じょ: 'jo',
+  びゃ: 'bya', びゅ: 'byu', びょ: 'byo',
+  ぴゃ: 'pya', ぴゅ: 'pyu', ぴょ: 'pyo',
+  // カタカナの外来語表記（例: フォックス, ウィッチ, ジェット）をひらがな化した後の拗音。
+  てぃ: 'ti', でぃ: 'di', とぅ: 'tu', どぅ: 'du',
+  ふぁ: 'fa', ふぃ: 'fi', ふぇ: 'fe', ふぉ: 'fo',
+  うぃ: 'wi', うぇ: 'we', うぉ: 'wo',
+  ちぇ: 'che', しぇ: 'she', じぇ: 'je',
+  つぁ: 'tsa', つぃ: 'tsi', つぇ: 'tse', つぉ: 'tso',
+  くぁ: 'kwa', ぐぁ: 'gwa',
+  ゔぁ: 'va', ゔぃ: 'vi', ゔぇ: 've', ゔぉ: 'vo', ゔゅ: 'vyu',
+};
+const HIRAGANA_MONOGRAPHS = {
+  あ: 'a', い: 'i', う: 'u', え: 'e', お: 'o',
+  か: 'ka', き: 'ki', く: 'ku', け: 'ke', こ: 'ko',
+  さ: 'sa', し: 'shi', す: 'su', せ: 'se', そ: 'so',
+  た: 'ta', ち: 'chi', つ: 'tsu', て: 'te', と: 'to',
+  な: 'na', に: 'ni', ぬ: 'nu', ね: 'ne', の: 'no',
+  は: 'ha', ひ: 'hi', ふ: 'fu', へ: 'he', ほ: 'ho',
+  ま: 'ma', み: 'mi', む: 'mu', め: 'me', も: 'mo',
+  や: 'ya', ゆ: 'yu', よ: 'yo',
+  ら: 'ra', り: 'ri', る: 'ru', れ: 're', ろ: 'ro',
+  わ: 'wa', を: 'wo', ん: 'n',
+  が: 'ga', ぎ: 'gi', ぐ: 'gu', げ: 'ge', ご: 'go',
+  ざ: 'za', じ: 'ji', ず: 'zu', ぜ: 'ze', ぞ: 'zo',
+  だ: 'da', ぢ: 'ji', づ: 'zu', で: 'de', ど: 'do',
+  ば: 'ba', び: 'bi', ぶ: 'bu', べ: 'be', ぼ: 'bo',
+  ぱ: 'pa', ぴ: 'pi', ぷ: 'pu', ぺ: 'pe', ぽ: 'po',
+  ぁ: 'a', ぃ: 'i', ぅ: 'u', ぇ: 'e', ぉ: 'o',
+  ゔ: 'vu', ゖ: 'ke',
+};
+
+function containsHiragana(text) {
+  return /[ぁ-ゖ]/.test(text);
+}
+
+function containsKatakana(text) {
+  return /[ァ-ヺー]/.test(text);
+}
+
+function containsKana(text) {
+  return containsHiragana(text) || containsKatakana(text);
+}
+
+function containsKanji(text) {
+  return /[一-鿿々〆〤]/.test(text);
+}
+
+// カタカナ→ひらがな。長音記号「ー」はひらがなに対応する文字がないのでそのまま残し、
+// 後段のローマ字変換で「直前の母音を繰り返す」処理に使う。
+function katakanaToHiragana(text) {
+  return text.replace(/[ァ-ヶ]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+}
+
+// ひらがな文字列をローマ字の「単位」の配列にトークナイズする。
+// 促音「っ」と長音「ー」は直後/直前の文脈を見て初めて展開できるため、
+// この段階では専用マーカーのまま残す。
+function tokenizeHiragana(text) {
+  const units = [];
+  for (let i = 0; i < text.length; i++) {
+    const two = text.slice(i, i + 2);
+    if (HIRAGANA_DIGRAPHS[two]) {
+      units.push(HIRAGANA_DIGRAPHS[two]);
+      i++;
+      continue;
+    }
+    const one = text[i];
+    if (one === 'っ') {
+      units.push('SOKUON'); // 促音: 次の単位の子音を重ねる
+      continue;
+    }
+    if (one === 'ー') {
+      units.push('CHOON'); // 長音: 直前の母音を繰り返す
+      continue;
+    }
+    if (HIRAGANA_MONOGRAPHS[one] !== undefined) {
+      units.push(HIRAGANA_MONOGRAPHS[one]);
+      continue;
+    }
+    units.push(one); // 未対応の文字（漢字・英数字など）はそのまま通す。
+  }
+  return units;
+}
+
+function hiraganaToRomaji(text) {
+  const units = tokenizeHiragana(text);
+
+  let result = '';
+  for (let i = 0; i < units.length; i++) {
+    if (units[i] === 'SOKUON') {
+      const next = units[i + 1];
+      if (next && /^[a-z]/.test(next)) {
+        result += next[0]; // 促音: 次の子音を重ねる（例: った -> tta）
+      }
+      continue;
+    }
+    if (units[i] === 'CHOON') {
+      const lastVowel = result.match(/[aiueo](?=[^aiueo]*$)/); // これまでの結果の末尾側にある最後の母音
+      if (lastVowel) result += lastVowel[0]; // 長音: 直前の母音を繰り返す（例: フリーレン -> furiiren）
+      continue;
+    }
+    result += units[i];
+  }
+  return result;
+}
+
+// ひらがな・カタカナが混在していてもまとめてローマ字に変換する。
+function kanaToRomaji(text) {
+  return hiraganaToRomaji(katakanaToHiragana(text));
 }
 
 function el(tag, props = {}, children = []) {
