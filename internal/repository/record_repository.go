@@ -117,3 +117,15 @@ func (r *RecordRepository) Update(ctx context.Context, userID, id int64, in mode
 	}
 	return rec, nil
 }
+
+// Delete は指定IDの記録をライブラリから削除する。他ユーザーの記録は削除できない。
+func (r *RecordRepository) Delete(ctx context.Context, userID, id int64) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM records WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return fmt.Errorf("delete record: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

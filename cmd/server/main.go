@@ -62,6 +62,7 @@ func run() error {
 	mux.HandleFunc("GET /api/records", auth.RequireUser(recordHandler.List))
 	mux.HandleFunc("POST /api/records", auth.RequireUser(recordHandler.Create))
 	mux.HandleFunc("PATCH /api/records/{id}", auth.RequireUser(recordHandler.Update))
+	mux.HandleFunc("DELETE /api/records/{id}", auth.RequireUser(recordHandler.Delete))
 
 	// ログイン不要（公開データ）
 	mux.HandleFunc("GET /api/search", searchHandler.Search)

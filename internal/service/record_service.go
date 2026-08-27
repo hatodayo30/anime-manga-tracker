@@ -53,3 +53,8 @@ func (s *RecordService) UpdateProgressOrStatus(ctx context.Context, userID, id i
 	}
 	return s.repo.Update(ctx, userID, id, in)
 }
+
+// Delete は記録をライブラリから削除する（詳細モーダルの「記録から外す」）。
+func (s *RecordService) Delete(ctx context.Context, userID, id int64) error {
+	return s.repo.Delete(ctx, userID, id)
+}

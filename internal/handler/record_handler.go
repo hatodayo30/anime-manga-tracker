@@ -82,3 +82,24 @@ func (h *RecordHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, record)
 }
+
+// Delete handles DELETE /api/records/{id} — 詳細モーダルの「記録から外す」で使う。
+func (h *RecordHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.UserFromContext(r.Context()).ID
+
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	if err := h.service.Delete(r.Context(), userID, id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "record not found")
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
