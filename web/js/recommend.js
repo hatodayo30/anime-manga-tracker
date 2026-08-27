@@ -1,16 +1,12 @@
 // recommend.js — おすすめ画面
 // ログイン中ユーザーの「見た」「見てる」ジャンルを集計し、上位ジャンルの人気作品を
-// AniListから取得して、ライブラリ未登録のものだけ表示する。
-const recState = {
-  type: 'anime',
-  user: null,
-};
+// AniListから取得して、ライブラリ未登録のものだけ複数の理由別シェルフで表示する。
+const recState = { kind: 'anime', user: null };
 
 function initRecommendPage(user) {
   recState.user = user;
-
   if (!user) {
-    document.getElementById('rec-tabs').style.display = 'none';
+    document.getElementById('kind-toggle').style.display = 'none';
     document.getElementById('rec-content').replaceChildren(
       el('p', { className: 'text-muted', style: { fontSize: '13px' } }, [
         'ログインするとあなたの視聴傾向に合わせたおすすめが表示されます。 ',
@@ -20,33 +16,19 @@ function initRecommendPage(user) {
     return;
   }
 
-  for (const input of document.querySelectorAll('#rec-tabs input[name="rectab"]')) {
-    input.addEventListener('change', () => {
-      recState.type = input.value;
-      syncRecTabUI();
-      loadRecommendations();
-    });
-  }
-
-  syncRecTabUI();
-  loadRecommendations();
+  recState.kind = getKind();
+  initKindToggle((kind) => {
+    recState.kind = kind;
+    loadAndRender();
+  });
+  loadAndRender();
 }
 
-function syncRecTabUI() {
-  for (const opt of document.querySelectorAll('#rec-tabs .seg-opt')) {
-    const input = opt.querySelector('input');
-    opt.classList.toggle('checked', input.value === recState.type);
-  }
-}
-
-// ライブラリ全体（除外用の登録済みID）と、「見た/見てる」分（ジャンル集計用）を1回の取得で分ける。
 function topGenres(records) {
   const counts = new Map();
   for (const r of records) {
     if (r.status !== 'done' && r.status !== 'active') continue;
-    for (const g of r.genres) {
-      counts.set(g, (counts.get(g) || 0) + 1);
-    }
+    for (const g of r.genres) counts.set(g, (counts.get(g) || 0) + 1);
   }
   return Array.from(counts.entries())
     .sort((a, b) => b[1] - a[1])
@@ -54,102 +36,75 @@ function topGenres(records) {
     .map(([genre]) => genre);
 }
 
-async function loadRecommendations() {
+async function loadAndRender() {
   const container = document.getElementById('rec-content');
   container.replaceChildren(el('p', { className: 'text-muted', style: { fontSize: '13px' } }, '読み込み中…'));
 
+  const { kind } = recState;
   let library = [];
   try {
-    library = await api.listRecords({ type: recState.type });
+    library = await api.listRecords({ type: kind });
   } catch (err) {
     container.replaceChildren(el('p', { className: 'text-muted' }, `読み込みに失敗しました: ${err.message}`));
     return;
   }
 
   const genres = topGenres(library);
-  if (genres.length === 0) {
-    container.replaceChildren(
-      el(
-        'p',
-        { className: 'text-muted', style: { fontSize: '13px' } },
-        '記録がまだありません。作品を検索してライブラリに追加すると、あなたの好みに合わせたおすすめが表示されます。'
-      )
-    );
-    return;
-  }
-
   const registeredIds = new Set(library.map((r) => r.anilistId));
+  const tsumi = library.filter((r) => r.status === 'want');
 
-  let results = [];
-  try {
-    results = await api.recommendations({ type: recState.type, genres });
-  } catch (err) {
-    container.replaceChildren(el('p', { className: 'text-muted' }, `AniListからの取得に失敗しました: ${err.message}`));
-    return;
+  let genreBased = [];
+  if (genres.length > 0) {
+    try {
+      genreBased = (await api.recommendations({ type: kind, genres })).filter((item) => !registeredIds.has(item.anilistId));
+    } catch {
+      genreBased = [];
+    }
+  }
+  const highScore = genreBased.filter((item) => item.score != null && item.score >= 80).sort((a, b) => b.score - a.score);
+
+  const shelves = [];
+  if (genreBased.length > 0) {
+    shelves.push({
+      title: 'いま記録している作品と近い雰囲気',
+      reason: `記録済みのジャンル（${genres.map(translateGenre).join('・')}）から`,
+      items: genreBased.slice(0, 10),
+    });
+  }
+  if (highScore.length > 0) {
+    shelves.push({ title: '評価が高い定番', reason: '★8.0以上・未記録の作品', items: highScore.slice(0, 10) });
+  }
+  if (tsumi.length > 0) {
+    shelves.push({ title: '積み作品から', reason: '「見たい・読みたい」に入れたまま止まっている作品', items: tsumi, isLibraryItems: true });
   }
 
-  const recommendations = results.filter((item) => !registeredIds.has(item.anilistId));
-  renderRecommendPage(container, genres, recommendations);
-}
-
-function renderRecommendPage(container, genres, recommendations) {
-  const genreLine = el(
-    'p',
-    { style: { marginBottom: 'var(--space-6)' } },
-    [
-      el('span', { className: 'text-muted', style: { fontSize: '12px' } }, 'あなたのよく見るジャンル：'),
-      el('span', { style: { fontSize: '14px', fontWeight: '500' } }, genres.map(translateGenre).join(' ・ ')),
-    ]
-  );
-
-  if (recommendations.length === 0) {
+  if (shelves.length === 0) {
     container.replaceChildren(
-      genreLine,
-      el('p', { className: 'text-muted', style: { fontSize: '13px' } }, 'おすすめできる未登録の作品が見つかりませんでした。')
+      el('p', { className: 'text-muted', style: { fontSize: '13px' } }, '記録がまだありません。作品を検索してライブラリに追加すると、あなたの好みに合わせたおすすめが表示されます。')
     );
     return;
   }
 
-  const grid = el('div', { className: 'grid-cards' }, recommendations.map(renderRecommendCard));
-  container.replaceChildren(genreLine, grid);
+  container.replaceChildren(...shelves.map(renderShelf));
 }
 
-function renderRecommendCard(item) {
-  const thumb = thumbEl(item, { width: '100%', height: '160px', fontSize: 24 });
-  thumb.style.borderRadius = 'var(--radius-sm)';
-
-  const genreTags = el(
-    'div',
-    { style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' } },
-    item.genres.slice(0, 2).map((g) => el('span', { className: 'tag tag-neutral' }, translateGenre(g)))
-  );
-
-  const score = formatScore(item.score);
-
-  const footer = el('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' } }, [
-    el('div', { className: 'card-title', style: { fontSize: '14px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, item.title),
+function renderShelf(shelf) {
+  return el('div', { className: 'shelf' }, [
+    el('h5', { className: 'shelf-h', style: { marginBottom: '4px' } }, shelf.title),
+    el('p', { className: 'text-muted shelf-desc' }, shelf.reason),
+    el(
+      'div',
+      { className: 'poster-row' },
+      shelf.items.map((item) => {
+        const record = shelf.isLibraryItems ? item : null;
+        const score = formatScore(item.score);
+        return posterCardEl(item, {
+          caption: score ? `★${score}` : null,
+          onClick: () => openWorkModal({ item, mediaType: recState.kind, record, user: recState.user, onChange: loadAndRender }),
+        });
+      })
+    ),
   ]);
-
-  const children = [thumb, footer, genreTags];
-  if (score) {
-    children.push(el('div', { className: 'text-muted', style: { fontSize: '12px' } }, `★${score}`));
-  }
-
-  return el(
-    'div',
-    { className: 'card elev-sm', style: { cursor: 'pointer' }, onClick: () => openRecommendModal(item) },
-    children
-  );
-}
-
-function openRecommendModal(item) {
-  openWorkModal({
-    item,
-    mediaType: recState.type,
-    status: null,
-    user: recState.user,
-    onStatusChange: () => loadRecommendations(),
-  });
 }
 
 window.authReadyPromise.then(initRecommendPage);

@@ -33,6 +33,9 @@ const api = {
   updateRecord(id, body) {
     return request(`/records/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
   },
+  deleteRecord(id) {
+    return request(`/records/${id}`, { method: 'DELETE' });
+  },
   searchAniList({ type, q = '' }) {
     return request('/search' + buildQuery({ type, q }));
   },

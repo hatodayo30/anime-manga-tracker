@@ -1,7 +1,8 @@
 // search.js — 検索・追加画面
 const state = {
-  tab: 'anime',
+  kind: 'anime',
   query: '',
+  user: null,
   isComposing: false, // IME変換中（未確定）かどうか
   requestSeq: 0, // 直近に発行したリクエストの通し番号。古いレスポンスの描画を無視するために使う。
 };
@@ -13,17 +14,16 @@ function scheduleSearch(delayMs = 500) {
   debounceTimer = setTimeout(runSearch, delayMs);
 }
 
-function initSearchPage() {
-  const tabButtons = document.querySelectorAll('#search-tabs input[name="searchtab"]');
-  for (const input of tabButtons) {
-    input.addEventListener('change', () => {
-      state.tab = input.value;
-      syncTabUI();
-      runSearch();
-    });
-  }
+function initSearchPage(user) {
+  state.user = user;
+  state.kind = getKind();
+  initKindToggle((kind) => {
+    state.kind = kind;
+    runSearch();
+  });
 
   const queryInput = document.getElementById('search-query');
+  queryInput.placeholder = state.kind === 'anime' ? 'アニメを検索' : '漫画を検索';
 
   // IME変換中（未確定）はcompositionstart〜compositionendの間trueになる。
   // その間は検索を発火させず、「い」「いぬ」のような中間状態でAPIを叩かないようにする。
@@ -50,15 +50,7 @@ function initSearchPage() {
     }
   });
 
-  syncTabUI();
   runSearch();
-}
-
-function syncTabUI() {
-  for (const opt of document.querySelectorAll('#search-tabs .seg-opt')) {
-    const input = opt.querySelector('input');
-    opt.classList.toggle('checked', input.value === state.tab);
-  }
 }
 
 // 同じ作品（anilistId）を除いた上で、AniListの人気値（popularity）降順にまとめる。
@@ -72,36 +64,39 @@ function mergeSearchResultsByPopularity(a, b) {
 }
 
 async function runSearch() {
-  const container = document.getElementById('search-results');
-  const { tab, query } = state;
+  const { kind, query } = state;
   const trimmed = query.trim();
+  document.getElementById('search-query').placeholder = kind === 'anime' ? 'アニメを検索' : '漫画を検索';
 
   // IME連打やタブ切替の連打で複数のリクエストが同時に飛んだ場合、後から返ってきた
   // 古いレスポンスで新しいレスポンスを上書きしてしまわないよう、通し番号で判定する。
   const seq = ++state.requestSeq;
+
+  if (trimmed === '') {
+    await renderIdleState(seq);
+    return;
+  }
+
+  const container = document.getElementById('search-results');
 
   // AniListのタイトルは漢字/ローマ字/英語のみでひらがな・カタカナ表記を持たないため、
   // 純粋なかな入力の場合はローマ字に変換した検索も並行して行い、結果をマージする
   // （例: 「そうそう」→ヒットなし/少数、「sousou」→葬送のフリーレン がヒット）。
   // 漢字が混じっている場合（「進撃の巨人」等）は元の検索で既に漢字タイトルに直接ヒットするため、
   // ローマ字変換（漢字部分はそのまま通過するので意味を成さない）は行わない。
-  const romaji = trimmed !== '' && containsKana(trimmed) && !containsKanji(trimmed) ? kanaToRomaji(trimmed) : null;
+  const romaji = containsKana(trimmed) && !containsKanji(trimmed) ? kanaToRomaji(trimmed) : null;
   const shouldMergeRomaji = !!romaji && romaji !== trimmed;
 
   let results = [];
   let libraryByAniListId = new Map();
   try {
     const [searchResults, romajiResults, libraryRecords] = await Promise.all([
-      api.searchAniList({ type: tab, q: query }),
-      shouldMergeRomaji ? api.searchAniList({ type: tab, q: romaji }) : Promise.resolve([]),
-      api.listRecords({ type: tab }),
+      api.searchAniList({ type: kind, q: query }),
+      shouldMergeRomaji ? api.searchAniList({ type: kind, q: romaji }) : Promise.resolve([]),
+      api.listRecords({ type: kind }),
     ]);
 
     results = shouldMergeRomaji ? mergeSearchResultsByPopularity(searchResults, romajiResults) : searchResults;
-
-    // 検索前（クエリ未入力）は AniList の人気順トップ5をデフォルト表示する。
-    if (trimmed === '') results = results.slice(0, 5);
-
     libraryByAniListId = new Map(libraryRecords.map((r) => [r.anilistId, r]));
   } catch (err) {
     if (seq !== state.requestSeq) return; // このリクエストは既に新しい検索で上書き済み
@@ -110,80 +105,103 @@ async function runSearch() {
   }
 
   if (seq !== state.requestSeq) return; // このリクエストは既に新しい検索で上書き済み
-  renderResults(container, results, libraryByAniListId);
+  renderSearchResults(container, results, libraryByAniListId);
 }
 
-function renderResults(container, results, libraryByAniListId) {
+function openSearchItemModal(item, record) {
+  openWorkModal({ item, mediaType: state.kind, record, user: state.user, onChange: runSearch });
+}
+
+function renderSearchResults(container, results, libraryByAniListId) {
   if (results.length === 0) {
-    container.replaceChildren(el('p', { className: 'text-muted', style: { fontSize: '13px' } }, '該当する作品が見つかりません。'));
+    container.replaceChildren(
+      el('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-8) 0', color: 'var(--color-neutral-400,var(--color-text))' } }, [
+        el('p', { className: 'text-muted', style: { fontSize: '13px', margin: '0' } }, `「${state.query}」に一致する作品が見つかりません。`),
+      ])
+    );
     return;
   }
 
-  const labels = STATUS_LABELS[state.tab];
-  const grid = el('div', { className: 'grid-search' });
-
-  for (const item of results) {
-    const existing = libraryByAniListId.get(item.anilistId);
-    const currentStatus = existing ? existing.status : null;
-
-    const thumb = thumbEl(item, { width: '100%', height: 'auto', fontSize: 18 });
-    thumb.style.aspectRatio = '1/1';
-    thumb.style.borderRadius = 'var(--radius-sm)';
-
-    const genreTags = el(
-      'div',
-      { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } },
-      item.genres.map((g) => el('span', { className: 'tag tag-neutral', style: { fontSize: '10px', padding: '2px 7px' } }, translateGenre(g)))
-    );
-
-    const makeStatusBtn = (status, label) =>
-      el(
-        'button',
-        {
-          className: `btn ${currentStatus === status ? 'btn-primary' : 'btn-secondary'}`,
-          style: { flex: '1', fontSize: '11px', padding: '5px 2px' },
-          onClick: () => addToLibrary(item, status),
-        },
-        label
-      );
-
-    const buttons = el('div', { style: { display: 'flex', gap: '4px' } }, [
-      makeStatusBtn('done', labels.done),
-      makeStatusBtn('active', labels.active),
-      makeStatusBtn('want', labels.want),
-    ]);
-
-    const card = el('div', { className: 'card elev-sm', style: { padding: 'var(--space-2)', gap: '5px' } }, [
-      thumb,
-      el('div', { className: 'card-title', style: { fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, item.title),
-      genreTags,
-      buttons,
-    ]);
-    grid.appendChild(card);
-  }
-
-  container.replaceChildren(grid);
+  const grid = el(
+    'div',
+    { className: 'poster-grid' },
+    results.map((item) => {
+      const record = libraryByAniListId.get(item.anilistId) || null;
+      return posterCardEl(item, {
+        badgeLabel: record ? `${STATUS_LABELS[state.kind][record.status]} ✓` : null,
+        caption: (item.genres || []).slice(0, 2).map(translateGenre).join('・'),
+        onClick: () => openSearchItemModal(item, record),
+      });
+    })
+  );
+  container.replaceChildren(el('p', { className: 'text-muted', style: { fontSize: '12px', margin: '0 0 var(--space-3)' } }, `${results.length}件の作品`), grid);
 }
 
-async function addToLibrary(item, status) {
+async function renderIdleState(seq) {
+  const container = document.getElementById('search-results');
+  const { kind } = state;
+
+  let libraryRecords = [];
+  let trendResults = [];
   try {
-    await api.createRecord({
-      anilistId: item.anilistId,
-      mediaType: state.tab,
-      title: item.title,
-      coverImageUrl: item.coverImageUrl,
-      genres: item.genres,
-      total: item.total,
-      status,
-      nextAiringAt: item.nextAiringAt ?? null,
-    });
-    runSearch();
+    [libraryRecords, trendResults] = await Promise.all([
+      api.listRecords({ type: kind }),
+      api.searchAniList({ type: kind, q: '' }),
+    ]);
   } catch (err) {
-    alert(`追加に失敗しました: ${err.message}`);
+    if (seq !== state.requestSeq) return;
+    container.replaceChildren(el('p', { className: 'text-muted' }, `読み込みに失敗しました: ${err.message}`));
+    return;
   }
+  if (seq !== state.requestSeq) return;
+
+  const libraryByAniListId = new Map(libraryRecords.map((r) => [r.anilistId, r]));
+  const tsumiWorks = libraryRecords.filter((r) => r.status === 'want');
+  const trendWorks = trendResults.slice(0, 5);
+  const trendTitle = kind === 'anime' ? '今季人気 TOP5' : '人気の漫画 TOP5';
+
+  const sections = [];
+
+  sections.push(
+    el('div', { className: 'shelf' }, [
+      el('h5', { className: 'shelf-h', style: { marginBottom: '4px' } }, '積み作品'),
+      el('p', { className: 'text-muted shelf-desc' }, '「見たい・読みたい」に入れたまま手をつけていない作品'),
+      tsumiWorks.length === 0
+        ? el('p', { className: 'text-muted', style: { fontSize: '13px' } }, '積み作品はありません。')
+        : el('div', { className: 'poster-grid' }, tsumiWorks.map((r) => posterCardEl(r, { onClick: () => openSearchItemModal(r, r) }))),
+    ])
+  );
+
+  sections.push(
+    el('div', { className: 'shelf' }, [
+      el('h5', { className: 'shelf-h' }, trendTitle),
+      el(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '640px' } },
+        trendWorks.map((item, i) => {
+          const record = libraryByAniListId.get(item.anilistId) || null;
+          const thumb = thumbEl(item, { width: '32px', height: '42px', className: 'thumb', fontSize: 13 });
+          const score = formatScore(item.score);
+          const children = [
+            el('span', { style: { fontFamily: 'var(--font-heading)', fontWeight: '700', fontSize: '16px', color: 'var(--color-accent)', width: '18px', flex: 'none' } }, String(i + 1)),
+            thumb,
+            el('div', { style: { flex: '1', minWidth: '0' } }, [
+              el('div', { className: 'card-title', style: { fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, item.title),
+              el('div', { className: 'text-muted', style: { fontSize: '11px', marginTop: '2px' } }, (item.genres || []).slice(0, 2).map(translateGenre).join('・')),
+            ]),
+          ];
+          if (record) children.push(el('span', { className: 'tag tag-accent', style: { flex: 'none' } }, `${STATUS_LABELS[kind][record.status]} ✓`));
+          if (score) children.push(el('span', { className: 'text-muted', style: { fontSize: '12px', flex: 'none' } }, `★${score}`));
+          return el('div', { className: 'card elev-sm', style: { flexDirection: 'row', alignItems: 'center', gap: 'var(--space-3)', padding: '9px var(--space-3)', cursor: 'pointer' }, onClick: () => openSearchItemModal(item, record) }, children);
+        })
+      ),
+    ])
+  );
+
+  container.replaceChildren(...sections);
 }
 
 window.authReadyPromise.then((user) => {
   if (!user) return; // 未ログイン: auth.js がログイン画面へリダイレクト中
-  initSearchPage();
+  initSearchPage(user);
 });

@@ -21,12 +21,12 @@ function initialForTitle(title) {
 }
 
 // サムネイル用の要素を作る。カバー画像があればそれを、無ければ頭文字+色のプレースホルダーを表示する。
-function thumbEl(item, { width, height, fontSize }) {
+function thumbEl(item, { width, height, fontSize, className = 'thumb' }) {
   const el = document.createElement('div');
-  el.className = 'thumb';
-  el.style.width = width;
-  el.style.height = height;
-  el.style.fontSize = fontSize + 'px';
+  el.className = className;
+  if (width != null) el.style.width = width;
+  if (height != null) el.style.height = height;
+  if (fontSize != null) el.style.fontSize = fontSize + 'px';
   if (item.coverImageUrl) {
     el.style.backgroundImage = `url("${item.coverImageUrl}")`;
   } else {
@@ -34,6 +34,57 @@ function thumbEl(item, { width, height, fontSize }) {
     el.textContent = initialForTitle(item.title);
   }
   return el;
+}
+
+// ポスター型カード（表紙 2:3 比率＋タイトル）。ホーム・検索・おすすめ・ライブラリで共通利用する。
+// opts: { kindLabel, badgeLabel, caption, pct, onClick }
+function posterCardEl(item, opts = {}) {
+  const thumb = thumbEl(item, { fontSize: 26, className: 'poster-thumb' });
+  const children = [thumb];
+  if (opts.kindLabel) thumb.appendChild(el('span', { className: 'poster-kindbadge' }, opts.kindLabel));
+  if (opts.badgeLabel) thumb.appendChild(el('span', { className: 'poster-badge' }, opts.badgeLabel));
+  children.push(el('div', { className: 'poster-title' }, item.title));
+  if (opts.pct != null) {
+    children.push(el('div', { className: 'poster-bar' }, [el('div', { className: 'poster-bar-fill', style: { width: `${opts.pct}%` } })]));
+  }
+  if (opts.caption) {
+    children.push(el('div', { className: 'text-muted', style: { fontSize: '11px', marginTop: '4px' } }, opts.caption));
+  }
+  return el('div', { className: 'poster-card', onClick: opts.onClick }, children);
+}
+
+// アニメ/漫画の表示切り替え（全画面で共有）。
+const KIND_STORAGE_KEY = 'kind';
+
+function getKind() {
+  return localStorage.getItem(KIND_STORAGE_KEY) === 'manga' ? 'manga' : 'anime';
+}
+
+function setKind(kind) {
+  localStorage.setItem(KIND_STORAGE_KEY, kind);
+}
+
+// id="kind-toggle" があるページでアニメ/漫画の切り替えボタンを有効化する。
+// onChange(kind) は選択が変わるたびに呼ばれる（呼び出し元がそのkindでデータを再描画する）。
+function initKindToggle(onChange) {
+  const container = document.getElementById('kind-toggle');
+  if (!container) return;
+
+  const sync = () => {
+    for (const btn of container.querySelectorAll('[data-kind]')) {
+      btn.classList.toggle('checked', btn.dataset.kind === getKind());
+    }
+  };
+
+  container.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-kind]');
+    if (!btn || btn.dataset.kind === getKind()) return;
+    setKind(btn.dataset.kind);
+    sync();
+    onChange(getKind());
+  });
+
+  sync();
 }
 
 // AniList のジャンル名（英語）→ 表示用の日本語ラベル。未知のジャンルはそのまま表示する。
@@ -65,12 +116,12 @@ function translateGenre(genre) {
 const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
 const WEEKDAY_EN_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// nextAiringAt（unix秒 or ISO文字列）から「木 25:00」のような表示用ラベルを作る。
+// nextAiringAt（unix秒 or ISO文字列）から放送時刻情報を取り出す。
 // 放送時刻はJST（日本の深夜アニメ表記）前提のため、閲覧者のブラウザのタイムゾーンに関わらず
 // 常にAsia/Tokyoとして曜日・時刻を計算する。
 // 24時以降（深夜アニメの慣例表記）は前日の曜日として扱う。
-function formatWeekday(nextAiringAt) {
-  if (!nextAiringAt) return '';
+function jstAiringInfo(nextAiringAt) {
+  if (!nextAiringAt) return null;
   const ms = typeof nextAiringAt === 'number' ? nextAiringAt * 1000 : new Date(nextAiringAt).getTime();
 
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -88,7 +139,14 @@ function formatWeekday(nextAiringAt) {
     hour += 24;
     dayIndex = (dayIndex + 6) % 7;
   }
-  return `${WEEKDAY_JA[dayIndex]} ${hour}:${get('minute')}`;
+  return { dayIndex, hour, minute: get('minute') };
+}
+
+// 「木 25:00」のような表示用ラベルを作る。
+function formatWeekday(nextAiringAt) {
+  const info = jstAiringInfo(nextAiringAt);
+  if (!info) return '';
+  return `${WEEKDAY_JA[info.dayIndex]} ${info.hour}:${info.minute}`;
 }
 
 function formatScore(score) {
