@@ -12,6 +12,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/anilist"
 	"github.com/hatodayo30/anime-manga-tracker/internal/config"
 	"github.com/hatodayo30/anime-manga-tracker/internal/handler"
+	"github.com/hatodayo30/anime-manga-tracker/internal/jikan"
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
 	"github.com/hatodayo30/anime-manga-tracker/internal/repository"
 	"github.com/hatodayo30/anime-manga-tracker/internal/service"
@@ -50,8 +51,9 @@ func run() error {
 	auth := middleware.NewAuth(authService)
 
 	anilistClient := anilist.NewClient()
+	jikanClient := jikan.NewClient()
 	searchHandler := handler.NewSearchHandler(anilistClient)
-	homeHandler := handler.NewHomeHandler(anilistClient)
+	homeHandler := handler.NewHomeHandler(anilistClient, jikanClient)
 
 	translateClient := translate.NewClient()
 	translateHandler := handler.NewTranslateHandler(translateClient)
@@ -70,6 +72,7 @@ func run() error {
 	mux.HandleFunc("GET /api/recommendations", searchHandler.Recommendations)
 	mux.HandleFunc("GET /api/home/season-anime", homeHandler.SeasonAnime)
 	mux.HandleFunc("GET /api/home/trending", homeHandler.Trending)
+	mux.HandleFunc("GET /api/home/trending-manga", homeHandler.TrendingManga)
 	mux.HandleFunc("POST /api/translate", translateHandler.Translate)
 
 	// 認証

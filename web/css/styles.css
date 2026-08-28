@@ -201,6 +201,13 @@ button.seg-opt { border: none; background: none; font: inherit; color: inherit; 
 }
 .poster-bar { height: 3px; background: var(--color-neutral-800); border-radius: 2px; margin-top: 6px; overflow: hidden; }
 .poster-bar-fill { height: 100%; background: var(--color-accent); }
+.poster-card-ranked { position: relative; padding-left: 22px; }
+.poster-rank-num {
+  position: absolute; left: -6px; bottom: 52px; z-index: 0;
+  font-family: var(--font-heading); font-weight: 900; font-size: 54px; line-height: 1;
+  color: var(--color-neutral-800);
+}
+.poster-card-ranked .poster-thumb, .poster-card-ranked .poster-title { position: relative; z-index: 1; }
 
 /* — home: schedule / row cards — */
 .side-row { flex-direction: row; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; }
@@ -255,4 +262,4 @@ button.seg-opt { border: none; background: none; font: inherit; color: inherit; 
   position: fixed; inset: 0; background: rgba(6,7,14,0.6);
   display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50;
 }
-.dialog-banner { position: relative; height: 120px; }
+.dialog-banner { height: 120px; }

@@ -66,12 +66,21 @@
           <div id="season-list" class="poster-row"></div>
         </div>
 
-        <div class="shelf" id="reading-manga-shelf">
+        <div class="shelf" id="ranking-shelf">
           <div class="shelf-head">
-            <h5 class="shelf-h">読んでる漫画</h5>
-            <a href="/library.html" class="shelf-more">すべて ›</a>
+            <h5 class="shelf-h">話題の漫画 TOP10</h5>
+            <a href="/search.html" class="shelf-more">すべて ›</a>
           </div>
-          <div id="reading-manga-list" style="display:flex;flex-direction:column;gap:8px;max-width:640px;"></div>
+          <div id="ranking-list" class="poster-row"></div>
+        </div>
+
+        <div class="shelf" id="magazine-shelf">
+          <div class="shelf-head">
+            <h5 class="shelf-h">掲載誌で探す</h5>
+          </div>
+          <p class="text-muted shelf-desc" id="magazine-desc"></p>
+          <div id="magazine-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:var(--space-3);"></div>
+          <div id="magazine-list" class="poster-row"></div>
         </div>
 
         <div class="shelf">

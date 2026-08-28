@@ -58,6 +58,9 @@ const api = {
   trending() {
     return request('/home/trending');
   },
+  trendingManga() {
+    return request('/home/trending-manga');
+  },
   getMe() {
     return request('/auth/me');
   },

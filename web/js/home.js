@@ -1,7 +1,7 @@
 // home.js — ホーム画面（棚型レイアウト）
 // 公開データ（ログイン不要）: 今週の放送予定 / 今季放送中アニメ
 // ログイン後: つづきを見る/読む・読んでる漫画・あなたへのおすすめ
-const homeState = { kind: 'anime', user: null, season: [], library: [] };
+const homeState = { kind: 'anime', user: null, season: [], library: [], ranking: [], activeMagazine: null };
 
 async function renderHome(user) {
   homeState.user = user;
@@ -19,13 +19,22 @@ async function loadAndRender() {
   document.getElementById('continue-title').textContent = kind === 'anime' ? 'つづきを見る' : 'つづきを読む';
   document.getElementById('schedule-shelf').style.display = kind === 'anime' ? '' : 'none';
   document.getElementById('season-shelf').style.display = kind === 'anime' ? '' : 'none';
-  document.getElementById('reading-manga-shelf').style.display = kind === 'manga' ? '' : 'none';
+  document.getElementById('ranking-shelf').style.display = kind === 'manga' ? '' : 'none';
+  document.getElementById('magazine-shelf').style.display = kind === 'manga' ? '' : 'none';
 
   try {
     homeState.season = kind === 'anime' ? await api.seasonAnime() : [];
   } catch (err) {
     homeState.season = [];
     document.getElementById('season-list').replaceChildren(el('p', { className: 'text-muted' }, `AniListからの取得に失敗しました: ${err.message}`));
+  }
+
+  homeState.activeMagazine = null;
+  try {
+    homeState.ranking = kind === 'manga' ? await api.trendingManga() : [];
+  } catch (err) {
+    homeState.ranking = [];
+    document.getElementById('ranking-list').replaceChildren(el('p', { className: 'text-muted' }, `ランキングの取得に失敗しました: ${err.message}`));
   }
 
   homeState.library = [];
@@ -44,7 +53,8 @@ function render() {
   renderContinueShelf();
   renderScheduleShelf();
   renderSeasonShelf();
-  renderReadingMangaShelf();
+  renderRankingShelf();
+  renderMagazineShelf();
   renderRecommendPreview();
 }
 
@@ -67,7 +77,7 @@ function openDiscoveryItemModal(item) {
   const record = libraryByAniListId().get(item.anilistId) || null;
   openWorkModal({
     item,
-    mediaType: 'anime',
+    mediaType: homeState.kind,
     record,
     user: homeState.user,
     onChange: loadAndRender,
@@ -172,40 +182,86 @@ function renderSeasonShelf() {
   );
 }
 
-function renderReadingMangaShelf() {
-  const container = document.getElementById('reading-manga-list');
+function rankingPosterEl(item, rank) {
+  const thumb = thumbEl(item, { fontSize: 26, className: 'poster-thumb' });
+  const score = formatScore(item.score);
+  const captionParts = [score ? `★${score}` : null, item.malRank ? `MAL #${item.malRank}` : null].filter(Boolean);
+  const children = [
+    el('span', { className: 'poster-rank-num' }, String(rank)),
+    thumb,
+    el('div', { className: 'poster-title' }, item.title),
+  ];
+  if (captionParts.length > 0) {
+    children.push(el('div', { className: 'text-muted', style: { fontSize: '11px', marginTop: '4px' } }, captionParts.join(' ・ ')));
+  }
+  if (item.members) {
+    children.push(el('div', { className: 'text-muted', style: { fontSize: '11px', marginTop: '2px' } }, `${Math.round(item.members / 1000)}千人が記録`));
+  }
+  return el('div', { className: 'poster-card poster-card-ranked', onClick: () => openDiscoveryItemModal(item) }, children);
+}
+
+function renderRankingShelf() {
+  const container = document.getElementById('ranking-list');
   if (homeState.kind !== 'manga') return;
 
-  const { user, library } = homeState;
-  if (!user) {
-    container.replaceChildren(
-      el('p', { className: 'text-muted', style: { fontSize: '13px' } }, [
-        'ログインすると、読んでる漫画がここに表示されます。 ',
-        el('a', { href: '/login.html' }, 'ログイン'),
-      ])
-    );
+  if (homeState.ranking.length === 0) {
+    container.replaceChildren(el('p', { className: 'text-muted', style: { fontSize: '13px' } }, 'ランキング情報を取得できませんでした。'));
     return;
   }
 
-  const unit = unitFor();
-  const reading = library.filter((r) => r.status === 'active');
-  if (reading.length === 0) {
-    container.replaceChildren(el('p', { className: 'text-muted', style: { fontSize: '13px' } }, '読んでる漫画はまだありません。検索から追加できます。'));
+  container.replaceChildren(...homeState.ranking.map((item, i) => rankingPosterEl(item, i + 1)));
+}
+
+function renderMagazineShelf() {
+  const chipsContainer = document.getElementById('magazine-chips');
+  const listContainer = document.getElementById('magazine-list');
+  const descEl = document.getElementById('magazine-desc');
+  if (homeState.kind !== 'manga') return;
+
+  const counts = new Map();
+  for (const item of homeState.ranking) {
+    for (const mag of item.magazines || []) counts.set(mag, (counts.get(mag) || 0) + 1);
+  }
+  const magazines = Array.from(counts.keys()).sort((a, b) => counts.get(b) - counts.get(a));
+
+  if (magazines.length === 0) {
+    descEl.textContent = '';
+    chipsContainer.replaceChildren();
+    listContainer.replaceChildren(el('p', { className: 'text-muted', style: { fontSize: '13px' } }, '掲載誌の情報を取得できませんでした。'));
     return;
   }
 
-  container.replaceChildren(
-    ...reading.map((r) => {
-      const thumb = thumbEl(r, { width: '34px', height: '46px', className: 'thumb', fontSize: 14 });
-      const progressLabel = r.total ? `${r.progress} / ${r.total}${unit}` : `${r.progress}${unit}まで`;
-      return el('div', { className: 'card elev-sm', style: { flexDirection: 'row', alignItems: 'center', gap: 'var(--space-3)', padding: '10px var(--space-3)', cursor: 'pointer' }, onClick: () => openLibraryItemModal(r) }, [
-        thumb,
-        el('div', { style: { flex: '1', minWidth: '0' } }, [
-          el('div', { className: 'card-title', style: { fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, r.title),
-          el('div', { className: 'text-muted', style: { fontSize: '11px', marginTop: '3px' } }, (r.genres || []).map(translateGenre).join('・')),
-        ]),
-        el('span', { className: 'tag tag-accent', style: { flex: 'none' } }, progressLabel),
-      ]);
+  if (!homeState.activeMagazine || !counts.has(homeState.activeMagazine)) {
+    homeState.activeMagazine = magazines[0];
+  }
+  const active = homeState.activeMagazine;
+
+  descEl.textContent = `${active} に載っている作品`;
+  chipsContainer.replaceChildren(
+    ...magazines.map((mag) =>
+      el(
+        'button',
+        {
+          type: 'button',
+          className: `tag ${mag === active ? 'tag-accent' : 'tag-outline'}`,
+          onClick: () => {
+            homeState.activeMagazine = mag;
+            renderMagazineShelf();
+          },
+        },
+        `${mag} (${counts.get(mag)})`
+      )
+    )
+  );
+
+  const works = homeState.ranking.filter((item) => (item.magazines || []).includes(active));
+  listContainer.replaceChildren(
+    ...works.map((item) => {
+      const score = formatScore(item.score);
+      return posterCardEl(item, {
+        caption: score ? `★${score}` : null,
+        onClick: () => openDiscoveryItemModal(item),
+      });
     })
   );
 }

@@ -27,10 +27,12 @@ type SearchResult struct {
 	NextEpisode   *int     `json:"nextEpisode,omitempty"`  // 次に放送される話数
 	AiringStatus  string   `json:"airingStatus,omitempty"` // AniListのstatus（RELEASING/FINISHED等）
 	Popularity    int      `json:"popularity"`             // AniListの人気値。複数の検索結果をマージして並べ替える際に使う
+	MalID         *int64   `json:"malId,omitempty"`        // MyAnimeListのID。Jikan APIから追加情報を引くためのキー
 }
 
 const mediaFields = `
       id
+      idMal
       title { romaji native english }
       coverImage { medium }
       genres
@@ -81,6 +83,7 @@ type nextAiringEpisode struct {
 
 type media struct {
 	ID                int                `json:"id"`
+	IDMal             *int               `json:"idMal"`
 	Title             mediaTitle         `json:"title"`
 	CoverImage        mediaCoverImage    `json:"coverImage"`
 	Genres            []string           `json:"genres"`
@@ -111,9 +114,9 @@ query ($season: MediaSeason, $year: Int) {
 `
 
 const trendingQuery = `
-query {
+query ($type: MediaType) {
   Page(page: 1, perPage: 10) {
-    media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {` + mediaFields + `
+    media(type: $type, sort: POPULARITY_DESC, isAdult: false) {` + mediaFields + `
     }
   }
 }
@@ -189,6 +192,10 @@ func toSearchResults(mediaType model.MediaType, list []media) []SearchResult {
 			AiringStatus:  m.Status,
 			Popularity:    m.Popularity,
 		}
+		if m.IDMal != nil {
+			malID := int64(*m.IDMal)
+			result.MalID = &malID
+		}
 		if m.NextAiringEpisode != nil {
 			at := m.NextAiringEpisode.AiringAt
 			result.NextAiringAt = &at
@@ -234,10 +241,19 @@ func (c *Client) SeasonAnime(ctx context.Context) ([]SearchResult, error) {
 // TrendingAnime はログイン不要のホーム画面向けに、全体人気ランキング上位を返す。
 func (c *Client) TrendingAnime(ctx context.Context) ([]SearchResult, error) {
 	var resp pageResponse
-	if err := c.do(ctx, trendingQuery, nil, &resp); err != nil {
+	if err := c.do(ctx, trendingQuery, map[string]any{"type": "ANIME"}, &resp); err != nil {
 		return nil, err
 	}
 	return toSearchResults(model.MediaTypeAnime, resp.Page.Media), nil
+}
+
+// TrendingManga はホーム画面の「話題の漫画 TOP10」向けに、全体人気ランキング上位を返す。
+func (c *Client) TrendingManga(ctx context.Context) ([]SearchResult, error) {
+	var resp pageResponse
+	if err := c.do(ctx, trendingQuery, map[string]any{"type": "MANGA"}, &resp); err != nil {
+		return nil, err
+	}
+	return toSearchResults(model.MediaTypeManga, resp.Page.Media), nil
 }
 
 // byIDsPageSize は byIDsQuery の perPage と揃える。AniList の Page.perPage 上限が50のため、
