@@ -113,6 +113,28 @@ function translateGenre(genre) {
   return GENRE_JA[genre] || genre;
 }
 
+// AniListのrelationType（英語）→ 表示用の日本語ラベル。未知の関係性はそのまま表示する。
+const RELATION_JA = {
+  SEQUEL: '続編',
+  PREQUEL: '前日譚',
+  SIDE_STORY: '外伝',
+  SPIN_OFF: 'スピンオフ',
+  PARENT: '原作',
+  ALTERNATIVE: '別バージョン',
+  ADAPTATION: '原作/アニメ化',
+  SUMMARY: '総集編',
+  FULL_STORY: '完全版',
+  COMPILATION: 'コンピレーション',
+  CONTAINS: '収録作品',
+  CHARACTER: '関連キャラクター',
+  OTHER: '関連作品',
+  SOURCE: '原作',
+};
+
+function translateRelation(relationType) {
+  return RELATION_JA[relationType] || relationType;
+}
+
 const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
 const WEEKDAY_EN_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 

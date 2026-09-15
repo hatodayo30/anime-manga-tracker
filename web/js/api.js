@@ -43,6 +43,9 @@ const api = {
     if (ids.length === 0) return Promise.resolve([]);
     return request('/anilist/media' + buildQuery({ type, ids: ids.join(',') }));
   },
+  relations({ id }) {
+    return request('/anilist/relations' + buildQuery({ id }));
+  },
   recommendations({ type, genres }) {
     if (genres.length === 0) return Promise.resolve([]);
     return request('/recommendations' + buildQuery({ type, genres: genres.join(',') }));
@@ -52,8 +55,8 @@ const api = {
     const { translated } = await request('/translate', { method: 'POST', body: JSON.stringify({ text, target }) });
     return translated;
   },
-  seasonAnime() {
-    return request('/home/season-anime');
+  seasonAnime({ season, year } = {}) {
+    return request('/home/season-anime' + buildQuery({ season, year }));
   },
   trending() {
     return request('/home/trending');

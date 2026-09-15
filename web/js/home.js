@@ -1,7 +1,7 @@
 // home.js — ホーム画面（棚型レイアウト）
 // 公開データ（ログイン不要）: 今週の放送予定 / 今季放送中アニメ
 // ログイン後: つづきを見る/読む・読んでる漫画・あなたへのおすすめ
-const homeState = { kind: 'anime', user: null, season: [], library: [], ranking: [], activeMagazine: null };
+const homeState = { kind: 'anime', user: null, season: [], library: [], ranking: [], activeMagazine: null, rankingCache: null };
 
 async function renderHome(user) {
   homeState.user = user;
@@ -31,7 +31,14 @@ async function loadAndRender() {
 
   homeState.activeMagazine = null;
   try {
-    homeState.ranking = kind === 'manga' ? await api.trendingManga() : [];
+    if (kind === 'manga') {
+      if (!homeState.rankingCache) {
+        homeState.rankingCache = await api.trendingManga();
+      }
+      homeState.ranking = homeState.rankingCache;
+    } else {
+      homeState.ranking = [];
+    }
   } catch (err) {
     homeState.ranking = [];
     document.getElementById('ranking-list').replaceChildren(el('p', { className: 'text-muted' }, `ランキングの取得に失敗しました: ${err.message}`));

@@ -19,10 +19,10 @@ type SearchResult struct {
 	Title         string   `json:"title"` // 日本作品: native（漢字/かな）優先。それ以外（KR/CN等）は english 優先。
 	CoverImageURL string   `json:"coverImageUrl"`
 	Genres        []string `json:"genres"`
-	Total         *int     `json:"total"` // アニメ: 話数 / 漫画: 話数（chapters）。進捗の追跡単位。
-	Volumes       *int     `json:"volumes,omitempty"`  // 漫画の既刊巻数（AniList volumes）。参考情報として表示するのみで進捗追跡には使わない。
-	Score         *int     `json:"score,omitempty"`    // AniListのaverageScore（0-100）
-	Synopsis      string   `json:"synopsis,omitempty"` // あらすじ（HTMLタグ除去済み）
+	Total         *int     `json:"total"`                  // アニメ: 話数 / 漫画: 話数（chapters）。進捗の追跡単位。
+	Volumes       *int     `json:"volumes,omitempty"`      // 漫画の既刊巻数（AniList volumes）。参考情報として表示するのみで進捗追跡には使わない。
+	Score         *int     `json:"score,omitempty"`        // AniListのaverageScore（0-100）
+	Synopsis      string   `json:"synopsis,omitempty"`     // あらすじ（HTMLタグ除去済み）
 	NextAiringAt  *int64   `json:"nextAiringAt,omitempty"` // unix seconds
 	NextEpisode   *int     `json:"nextEpisode,omitempty"`  // 次に放送される話数
 	AiringStatus  string   `json:"airingStatus,omitempty"` // AniListのstatus（RELEASING/FINISHED等）
@@ -133,6 +133,28 @@ query ($ids: [Int], $type: MediaType) {
 }
 `
 
+// relationsQuery は作品モーダルの「関連作品」セクション向けに、続編・前日譚・スピンオフ等の
+// 直接の関連作品を取得する。
+const relationsQuery = `
+query ($id: Int) {
+  Media(id: $id) {
+    relations {
+      edges {
+        relationType(version: 2)
+        node {
+          id
+          idMal
+          type
+          title { romaji native english }
+          coverImage { medium }
+          countryOfOrigin
+        }
+      }
+    }
+  }
+}
+`
+
 // byGenresQuery はおすすめ機能向けに、指定ジャンルのいずれかに合致する作品を人気順で取得する。
 const byGenresQuery = `
 query ($genres: [String], $type: MediaType) {
@@ -142,6 +164,65 @@ query ($genres: [String], $type: MediaType) {
   }
 }
 `
+
+// RelatedWork は作品モーダルの「関連作品」セクション向けの1件分の情報。
+type RelatedWork struct {
+	AniListID     int64  `json:"anilistId"`
+	Title         string `json:"title"`
+	CoverImageURL string `json:"coverImageUrl"`
+	MediaType     string `json:"mediaType"`    // "anime" | "manga"
+	RelationType  string `json:"relationType"` // SEQUEL/PREQUEL/SIDE_STORY/SPIN_OFF/ADAPTATION 等（AniListの生の値）
+}
+
+type relationNode struct {
+	ID              int             `json:"id"`
+	IDMal           *int            `json:"idMal"`
+	Type            string          `json:"type"`
+	Title           mediaTitle      `json:"title"`
+	CoverImage      mediaCoverImage `json:"coverImage"`
+	CountryOfOrigin string          `json:"countryOfOrigin"`
+}
+
+type relationEdge struct {
+	RelationType string       `json:"relationType"`
+	Node         relationNode `json:"node"`
+}
+
+type mediaRelationsResponse struct {
+	Media struct {
+		Relations struct {
+			Edges []relationEdge `json:"edges"`
+		} `json:"relations"`
+	} `json:"Media"`
+}
+
+// Relations は作品モーダルの「関連作品」セクション向けに、id直下の続編・前日譚・スピンオフ等を取得する。
+func (c *Client) Relations(ctx context.Context, id int64) ([]RelatedWork, error) {
+	var resp mediaRelationsResponse
+	if err := c.do(ctx, relationsQuery, map[string]any{"id": int(id)}, &resp); err != nil {
+		return nil, err
+	}
+
+	works := make([]RelatedWork, 0, len(resp.Media.Relations.Edges))
+	for _, edge := range resp.Media.Relations.Edges {
+		node := edge.Node
+		var title string
+		if node.CountryOfOrigin == "" || node.CountryOfOrigin == "JP" {
+			title = firstNonEmpty(node.Title.Native, node.Title.Romaji, node.Title.English)
+		} else {
+			title = firstNonEmpty(node.Title.English, node.Title.Romaji, node.Title.Native)
+		}
+
+		works = append(works, RelatedWork{
+			AniListID:     int64(node.ID),
+			Title:         title,
+			CoverImageURL: node.CoverImage.Medium,
+			MediaType:     strings.ToLower(node.Type),
+			RelationType:  edge.RelationType,
+		})
+	}
+	return works, nil
+}
 
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
@@ -229,7 +310,14 @@ func currentSeason(now time.Time) (string, int) {
 // SeasonAnime はログイン不要のホーム画面向けに、今季放送中アニメを人気順で返す。
 func (c *Client) SeasonAnime(ctx context.Context) ([]SearchResult, error) {
 	season, year := currentSeason(time.Now())
+	return c.SeasonAnimeFor(ctx, season, year)
+}
 
+// ValidSeasons はAniListが受け付けるMediaSeason enumの値。
+var ValidSeasons = map[string]bool{"WINTER": true, "SPRING": true, "SUMMER": true, "FALL": true}
+
+// SeasonAnimeFor はシーズンブラウジングページ向けに、指定した season/year のアニメを人気順で返す。
+func (c *Client) SeasonAnimeFor(ctx context.Context, season string, year int) ([]SearchResult, error) {
 	var resp pageResponse
 	err := c.do(ctx, seasonQuery, map[string]any{"season": season, "year": year}, &resp)
 	if err != nil {
