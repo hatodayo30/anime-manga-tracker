@@ -8,13 +8,22 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
 
-// Google翻訳の非公式エンドポイント。APIキー不要で小規模な利用に使える。
-// 公式にサポートされたAPIではないため、失敗時は呼び出し元で原文にフォールバックすること。
-const endpoint = "https://translate.googleapis.com/translate_a/single"
+// MyMemory Translation API。APIキー不要で小規模な利用に使える。
+// （以前はGoogle翻訳の非公式エンドポイントを使っていたが、自動アクセスとして
+// ブロックされ安定して動かなかったため切り替えた）
+// 匿名利用は1リクエストあたり500バイト程度の制限があるため、長いあらすじは
+// 文単位でチャンクに分割してから翻訳し、結果を結合する。
+const endpoint = "https://api.mymemory.translated.net/get"
+
+// chunkByteLimit はMyMemoryの匿名利用時の制限に収まるよう、余裕を持たせた1リクエストあたりの上限。
+const chunkByteLimit = 450
+
+var sentenceSplitPattern = regexp.MustCompile(`(?:[.!?]\s+|\n+)`)
 
 type Client struct {
 	httpClient *http.Client
@@ -24,20 +33,37 @@ func NewClient() *Client {
 	return &Client{httpClient: &http.Client{Timeout: 8 * time.Second}}
 }
 
+type mymemoryResponse struct {
+	ResponseData struct {
+		TranslatedText string `json:"translatedText"`
+	} `json:"responseData"`
+	ResponseStatus int `json:"responseStatus"`
+}
+
 // Translate は text を targetLang（例: "ja"）に翻訳する。
 func (c *Client) Translate(ctx context.Context, text, targetLang string) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return "", nil
 	}
 
+	var sb strings.Builder
+	for _, chunk := range splitIntoChunks(text, chunkByteLimit) {
+		translated, err := c.translateChunk(ctx, chunk, targetLang)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(translated)
+		sb.WriteString(" ")
+	}
+
+	return strings.TrimSpace(sb.String()), nil
+}
+
+func (c *Client) translateChunk(ctx context.Context, text, targetLang string) (string, error) {
 	q := url.Values{
-		"client": {"gtx"},
-		// AniListのdescriptionは常に英語。sl:autoだと "Mushoku Tensei" のようなローマ字の
-		// 作品名を含むテキストを日本語と誤検出し、翻訳がスキップされることがあるため固定する。
-		"sl": {"en"},
-		"tl": {targetLang},
-		"dt": {"t"},
-		"q":  {text},
+		// AniListのdescriptionは常に英語のため、原文言語を固定する。
+		"langpair": {"en|" + targetLang},
+		"q":        {text},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+q.Encode(), nil)
@@ -55,32 +81,41 @@ func (c *Client) Translate(ctx context.Context, text, targetLang string) (string
 		return "", fmt.Errorf("translate returned status %d", resp.StatusCode)
 	}
 
-	// レスポンスは [[[訳文, 原文, ...], [訳文, 原文, ...], ...], ...] という
-	// ネストした配列（型がまちまち）なので、先頭要素の各セグメントの訳文だけを拾う。
-	var raw []any
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	var wrapper mymemoryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
-	if len(raw) == 0 {
-		return "", fmt.Errorf("unexpected translate response")
-	}
-	segments, ok := raw[0].([]any)
-	if !ok {
-		return "", fmt.Errorf("unexpected translate response shape")
+	if wrapper.ResponseStatus != http.StatusOK {
+		return "", fmt.Errorf("translate returned status %d", wrapper.ResponseStatus)
 	}
 
-	var sb strings.Builder
-	for _, seg := range segments {
-		parts, ok := seg.([]any)
-		if !ok || len(parts) == 0 {
-			continue
-		}
-		translated, ok := parts[0].(string)
-		if !ok {
-			continue
-		}
-		sb.WriteString(translated)
-	}
+	return wrapper.ResponseData.TranslatedText, nil
+}
 
-	return sb.String(), nil
+// splitIntoChunks は text を文単位で、maxBytes以下のチャンクにまとめる。
+// 1文だけでmaxBytesを超える場合は、そのまま1チャンクとして送る（MyMemory側で切り詰められる可能性はあるが、
+// 文の途中で機械的に切ると翻訳品質が落ちるため避ける）。
+func splitIntoChunks(text string, maxBytes int) []string {
+	sentences := sentenceSplitPattern.Split(text, -1)
+
+	var chunks []string
+	var current strings.Builder
+	for _, s := range sentences {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if current.Len() > 0 && current.Len()+len(s)+1 > maxBytes {
+			chunks = append(chunks, current.String())
+			current.Reset()
+		}
+		if current.Len() > 0 {
+			current.WriteString(" ")
+		}
+		current.WriteString(s)
+	}
+	if current.Len() > 0 {
+		chunks = append(chunks, current.String())
+	}
+	return chunks
 }
