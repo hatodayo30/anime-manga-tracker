@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -9,14 +9,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/hatodayo30/anime-manga-tracker/internal/model"
+	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 )
 
 var ErrEmailTaken = errors.New("email already registered")
 
 // UserWithHash はログイン検証時にのみ使う内部表現（password_hash を含む）。
 type UserWithHash struct {
-	model.User
+	domain.User
 	PasswordHash string
 }
 
@@ -29,8 +29,8 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 }
 
 // Create はユーザーを作成する。email は UNIQUE 制約により重複登録を防ぐ。
-func (r *UserRepository) Create(ctx context.Context, email, passwordHash string) (*model.User, error) {
-	var u model.User
+func (r *UserRepository) Create(ctx context.Context, email, passwordHash string) (*domain.User, error) {
+	var u domain.User
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO users (email, password_hash) VALUES ($1, $2)
 		RETURNING id, email, created_at

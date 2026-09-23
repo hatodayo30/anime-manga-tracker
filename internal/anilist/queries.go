@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hatodayo30/anime-manga-tracker/internal/model"
+	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 )
 
 // AniList の description は asHtml:false でも <br> や <i> などのタグが残ることがあるため取り除く。
@@ -243,7 +243,7 @@ func cleanSynopsis(desc *string) string {
 	return strings.TrimSpace(s)
 }
 
-func toSearchResults(mediaType model.MediaType, list []media) []SearchResult {
+func toSearchResults(mediaType domain.MediaType, list []media) []SearchResult {
 	results := make([]SearchResult, 0, len(list))
 	for _, m := range list {
 		// native は原語表記のため、日本作品なら漢字/かな、韓国・中国作品なら
@@ -257,7 +257,7 @@ func toSearchResults(mediaType model.MediaType, list []media) []SearchResult {
 			title = firstNonEmpty(m.Title.English, m.Title.Romaji, m.Title.Native)
 		}
 		total := m.Episodes
-		if mediaType == model.MediaTypeManga {
+		if mediaType == domain.MediaTypeManga {
 			total = m.Chapters
 		}
 
@@ -323,7 +323,7 @@ func (c *Client) SeasonAnimeFor(ctx context.Context, season string, year int) ([
 	if err != nil {
 		return nil, err
 	}
-	return toSearchResults(model.MediaTypeAnime, resp.Page.Media), nil
+	return toSearchResults(domain.MediaTypeAnime, resp.Page.Media), nil
 }
 
 // TrendingAnime はログイン不要のホーム画面向けに、全体人気ランキング上位を返す。
@@ -332,7 +332,7 @@ func (c *Client) TrendingAnime(ctx context.Context) ([]SearchResult, error) {
 	if err := c.do(ctx, trendingQuery, map[string]any{"type": "ANIME"}, &resp); err != nil {
 		return nil, err
 	}
-	return toSearchResults(model.MediaTypeAnime, resp.Page.Media), nil
+	return toSearchResults(domain.MediaTypeAnime, resp.Page.Media), nil
 }
 
 // TrendingManga はホーム画面の「話題の漫画 TOP10」向けに、全体人気ランキング上位を返す。
@@ -341,7 +341,7 @@ func (c *Client) TrendingManga(ctx context.Context) ([]SearchResult, error) {
 	if err := c.do(ctx, trendingQuery, map[string]any{"type": "MANGA"}, &resp); err != nil {
 		return nil, err
 	}
-	return toSearchResults(model.MediaTypeManga, resp.Page.Media), nil
+	return toSearchResults(domain.MediaTypeManga, resp.Page.Media), nil
 }
 
 // byIDsPageSize は byIDsQuery の perPage と揃える。AniList の Page.perPage 上限が50のため、
@@ -351,7 +351,7 @@ const byIDsPageSize = 50
 // MediaByIDs は AniList の作品IDリストから最新情報をまとめて取得する。
 // マイライブラリ画面で、保存済みレコードの総話数・放送状況・現在の話数を最新化するために使う。
 // ids が50件を超える場合は50件ずつに分割して複数回リクエストする。
-func (c *Client) MediaByIDs(ctx context.Context, ids []int64, mediaType model.MediaType) ([]SearchResult, error) {
+func (c *Client) MediaByIDs(ctx context.Context, ids []int64, mediaType domain.MediaType) ([]SearchResult, error) {
 	if !mediaType.Valid() {
 		return nil, fmt.Errorf("invalid media type: %s", mediaType)
 	}
@@ -384,7 +384,7 @@ func (c *Client) MediaByIDs(ctx context.Context, ids []int64, mediaType model.Me
 }
 
 // ByGenres はおすすめ機能向けに、指定ジャンルのいずれかに合致する作品を人気順で取得する。
-func (c *Client) ByGenres(ctx context.Context, genres []string, mediaType model.MediaType) ([]SearchResult, error) {
+func (c *Client) ByGenres(ctx context.Context, genres []string, mediaType domain.MediaType) ([]SearchResult, error) {
 	if !mediaType.Valid() {
 		return nil, fmt.Errorf("invalid media type: %s", mediaType)
 	}
@@ -404,8 +404,8 @@ func (c *Client) ByGenres(ctx context.Context, genres []string, mediaType model.
 	return toSearchResults(mediaType, resp.Page.Media), nil
 }
 
-// Search は作品名で AniList を検索する。mediaType は model.MediaTypeAnime / MediaTypeManga。
-func (c *Client) Search(ctx context.Context, query string, mediaType model.MediaType) ([]SearchResult, error) {
+// Search は作品名で AniList を検索する。mediaType は domain.MediaTypeAnime / MediaTypeManga。
+func (c *Client) Search(ctx context.Context, query string, mediaType domain.MediaType) ([]SearchResult, error) {
 	if !mediaType.Valid() {
 		return nil, fmt.Errorf("invalid media type: %s", mediaType)
 	}

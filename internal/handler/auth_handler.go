@@ -6,14 +6,14 @@ import (
 	"time"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
-	"github.com/hatodayo30/anime-manga-tracker/internal/service"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 )
 
 type AuthHandler struct {
-	service *service.AuthService
+	service *auth.Service
 }
 
-func NewAuthHandler(s *service.AuthService) *AuthHandler {
+func NewAuthHandler(s *auth.Service) *AuthHandler {
 	return &AuthHandler{service: s}
 }
 
@@ -32,7 +32,7 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 
 	user, token, expiresAt, err := h.service.SignUp(r.Context(), in.Email, in.Password)
 	if err != nil {
-		if errors.Is(err, service.ErrEmailTaken) {
+		if errors.Is(err, auth.ErrEmailTaken) {
 			writeError(w, http.StatusConflict, "email already registered")
 			return
 		}
@@ -54,7 +54,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, token, expiresAt, err := h.service.Login(r.Context(), in.Email, in.Password)
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidCredentials) {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
 			writeError(w, http.StatusUnauthorized, "invalid email or password")
 			return
 		}

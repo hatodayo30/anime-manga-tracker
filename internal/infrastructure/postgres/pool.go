@@ -1,5 +1,5 @@
-// Package repository はDBアクセス層を提供する。
-package repository
+// Package postgres は PostgreSQL への具体的なアクセス実装を提供する（infrastructure層）。
+package postgres
 
 import (
 	"context"

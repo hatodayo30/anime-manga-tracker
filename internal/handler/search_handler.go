@@ -8,7 +8,7 @@ import (
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/anilist"
 	"github.com/hatodayo30/anime-manga-tracker/internal/jikan"
-	"github.com/hatodayo30/anime-manga-tracker/internal/model"
+	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 )
 
 type SearchHandler struct {
@@ -28,7 +28,7 @@ const jikanFallbackThreshold = 3
 
 // Search handles GET /api/search?type=anime&q=蒼穹
 func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
-	mediaType := model.MediaType(r.URL.Query().Get("type"))
+	mediaType := domain.MediaType(r.URL.Query().Get("type"))
 	if !mediaType.Valid() {
 		writeError(w, http.StatusBadRequest, "type must be 'anime' or 'manga'")
 		return
@@ -53,10 +53,10 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 // withJikanFallback はAniListの検索結果にJikanの検索結果を足し、タイトルの重複を除いて
 // 人気順にまとめる。Jikan側が失敗してもAniListの結果はそのまま返す。
-func (h *SearchHandler) withJikanFallback(r *http.Request, mediaType model.MediaType, query string, aniListResults []anilist.SearchResult) []anilist.SearchResult {
+func (h *SearchHandler) withJikanFallback(r *http.Request, mediaType domain.MediaType, query string, aniListResults []anilist.SearchResult) []anilist.SearchResult {
 	var jikanResults []anilist.SearchResult
 	var err error
-	if mediaType == model.MediaTypeManga {
+	if mediaType == domain.MediaTypeManga {
 		jikanResults, err = h.jikanClient.SearchManga(r.Context(), query)
 	} else {
 		jikanResults, err = h.jikanClient.SearchAnime(r.Context(), query)
@@ -87,7 +87,7 @@ func (h *SearchHandler) withJikanFallback(r *http.Request, mediaType model.Media
 // ByIDs handles GET /api/anilist/media?type=anime&ids=1,2,3
 // マイライブラリ画面で、保存済み作品の総話数・放送状況・現在の話数を最新化するために使う。
 func (h *SearchHandler) ByIDs(w http.ResponseWriter, r *http.Request) {
-	mediaType := model.MediaType(r.URL.Query().Get("type"))
+	mediaType := domain.MediaType(r.URL.Query().Get("type"))
 	if !mediaType.Valid() {
 		writeError(w, http.StatusBadRequest, "type must be 'anime' or 'manga'")
 		return
@@ -142,7 +142,7 @@ func (h *SearchHandler) Relations(w http.ResponseWriter, r *http.Request) {
 // 「どのジャンルを見るか」はクライアント（ログイン中ユーザーのライブラリ集計）が決めるため、
 // このエンドポイント自体はログイン不要。
 func (h *SearchHandler) Recommendations(w http.ResponseWriter, r *http.Request) {
-	mediaType := model.MediaType(r.URL.Query().Get("type"))
+	mediaType := domain.MediaType(r.URL.Query().Get("type"))
 	if !mediaType.Valid() {
 		writeError(w, http.StatusBadRequest, "type must be 'anime' or 'manga'")
 		return
