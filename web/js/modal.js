@@ -23,6 +23,8 @@ function openWorkModal({ item, mediaType, record, user, onChange }) {
   let translationRequested = false;
   let freshInfo = null; // AniListの最新情報（総話数・巻数・放送状況・次話）。放送話数の上限判定に使う。
   let freshInfoRequested = false;
+  let relatedWorks = null; // 続編・前日譚・スピンオフ等（AniList未登録の作品ではnullのまま）
+  let relationsRequested = false;
 
   const thisOverlay = el('div', { className: 'modal-overlay', onClick: () => closeWorkModal() }, []);
   modalOverlayEl = thisOverlay;
@@ -115,6 +117,29 @@ function openWorkModal({ item, mediaType, record, user, onChange }) {
   const currentAiringEpisode = () => {
     if (mediaType !== 'anime' || !freshInfo || freshInfo.airingStatus !== 'RELEASING' || freshInfo.nextEpisode == null) return null;
     return freshInfo.nextEpisode - 1;
+  };
+
+  const ensureRelations = () => {
+    if (relationsRequested || !item.anilistId) return;
+    relationsRequested = true;
+    api
+      .relations({ id: item.anilistId })
+      .then((results) => {
+        if (modalOverlayEl !== thisOverlay) return;
+        relatedWorks = results;
+        render();
+      })
+      .catch(() => {});
+  };
+
+  const openRelatedWorkModal = (work) => {
+    openWorkModal({
+      item: { anilistId: work.anilistId, title: work.title, coverImageUrl: work.coverImageUrl, genres: [] },
+      mediaType: work.mediaType,
+      record: null,
+      user,
+      onChange: notifyChange,
+    });
   };
 
   const ensureTranslation = () => {
@@ -236,10 +261,34 @@ function openWorkModal({ item, mediaType, record, user, onChange }) {
       el('div', { style: { borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-6)' } }, bottomChildren),
     ]);
 
+    const relationsSection =
+      relatedWorks && relatedWorks.length > 0
+        ? el('div', { style: { padding: '0 var(--space-6) var(--space-6)' } }, [
+            el('div', { style: { borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-6)' } }, [
+              el('div', { className: 'text-muted', style: { fontSize: '12px', marginBottom: '10px' } }, '関連作品'),
+              el(
+                'div',
+                { style: { display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '4px' } },
+                relatedWorks.map((work) =>
+                  el(
+                    'div',
+                    { style: { flex: 'none', width: '84px', cursor: 'pointer' }, onClick: () => openRelatedWorkModal(work) },
+                    [
+                      thumbEl(work, { width: '84px', height: '112px', className: 'thumb', fontSize: 22 }),
+                      el('div', { className: 'tag tag-outline', style: { fontSize: '10px', padding: '2px 8px', margin: '6px 0 3px' } }, translateRelation(work.relationType)),
+                      el('div', { style: { fontSize: '11px', lineHeight: '1.3', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, work.title),
+                    ]
+                  )
+                )
+              ),
+            ]),
+          ])
+        : null;
+
     const dialog = el(
       'div',
       { className: 'card elev-lg', style: { width: '660px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '0', position: 'relative' }, onClick: (e) => e.stopPropagation() },
-      [banner, topRow, bottomSection]
+      [banner, topRow, bottomSection, relationsSection]
     );
 
     modalOverlayEl.replaceChildren(dialog);
@@ -248,6 +297,7 @@ function openWorkModal({ item, mediaType, record, user, onChange }) {
   render();
   ensureTranslation();
   ensureFreshInfo();
+  ensureRelations();
 }
 
 document.addEventListener('keydown', (e) => {

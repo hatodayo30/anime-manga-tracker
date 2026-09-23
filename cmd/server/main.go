@@ -52,7 +52,7 @@ func run() error {
 
 	anilistClient := anilist.NewClient()
 	jikanClient := jikan.NewClient()
-	searchHandler := handler.NewSearchHandler(anilistClient)
+	searchHandler := handler.NewSearchHandler(anilistClient, jikanClient)
 	homeHandler := handler.NewHomeHandler(anilistClient, jikanClient)
 
 	translateClient := translate.NewClient()
@@ -69,6 +69,7 @@ func run() error {
 	// ログイン不要（公開データ）
 	mux.HandleFunc("GET /api/search", searchHandler.Search)
 	mux.HandleFunc("GET /api/anilist/media", searchHandler.ByIDs)
+	mux.HandleFunc("GET /api/anilist/relations", searchHandler.Relations)
 	mux.HandleFunc("GET /api/recommendations", searchHandler.Recommendations)
 	mux.HandleFunc("GET /api/home/season-anime", homeHandler.SeasonAnime)
 	mux.HandleFunc("GET /api/home/trending", homeHandler.Trending)
