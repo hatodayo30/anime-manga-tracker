@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"net/http"
-
 	"github.com/labstack/echo/v4"
 )
 
@@ -17,10 +15,8 @@ type Handlers struct {
 	WebDir      string
 }
 
-// NewRouter はEchoのルーティングを構築する。
-//
-// records/auth はEcho化されたハンドラをそのまま登録する。search/home/translate は
-// net/http ベースのハンドラのまま（次段階で移行予定）なので echo.WrapHandler で接続する。
+// NewRouter はEchoのルーティングを構築する。静的ファイル配信のみ、既存の
+// net/http.Handler実装（NewStaticHandler）をecho.WrapHandlerで接続する。
 func NewRouter(h Handlers) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -31,14 +27,14 @@ func NewRouter(h Handlers) *echo.Echo {
 	records.PATCH("/:id", h.Record.Update)
 	records.DELETE("/:id", h.Record.Delete)
 
-	e.GET("/api/search", echo.WrapHandler(http.HandlerFunc(h.Search.Search)))
-	e.GET("/api/anilist/media", echo.WrapHandler(http.HandlerFunc(h.Search.ByIDs)))
-	e.GET("/api/anilist/relations", echo.WrapHandler(http.HandlerFunc(h.Search.Relations)))
-	e.GET("/api/recommendations", echo.WrapHandler(http.HandlerFunc(h.Search.Recommendations)))
-	e.GET("/api/home/season-anime", echo.WrapHandler(http.HandlerFunc(h.Home.SeasonAnime)))
-	e.GET("/api/home/trending", echo.WrapHandler(http.HandlerFunc(h.Home.Trending)))
-	e.GET("/api/home/trending-manga", echo.WrapHandler(http.HandlerFunc(h.Home.TrendingManga)))
-	e.POST("/api/translate", echo.WrapHandler(http.HandlerFunc(h.Translate.Translate)))
+	e.GET("/api/search", h.Search.Search)
+	e.GET("/api/anilist/media", h.Search.ByIDs)
+	e.GET("/api/anilist/relations", h.Search.Relations)
+	e.GET("/api/recommendations", h.Search.Recommendations)
+	e.GET("/api/home/season-anime", h.Home.SeasonAnime)
+	e.GET("/api/home/trending", h.Home.Trending)
+	e.GET("/api/home/trending-manga", h.Home.TrendingManga)
+	e.POST("/api/translate", h.Translate.Translate)
 
 	e.POST("/api/auth/signup", h.Auth.SignUp)
 	e.POST("/api/auth/login", h.Auth.Login)

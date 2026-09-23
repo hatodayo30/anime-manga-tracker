@@ -28,15 +28,15 @@ type credentialsInput struct {
 func (h *AuthHandler) SignUp(c echo.Context) error {
 	var in credentialsInput
 	if err := c.Bind(&in); err != nil {
-		return jsonError(c, http.StatusBadRequest, "invalid request body")
+		return writeError(c, http.StatusBadRequest, "invalid request body")
 	}
 
 	user, token, expiresAt, err := h.service.SignUp(c.Request().Context(), in.Email, in.Password)
 	if err != nil {
 		if errors.Is(err, auth.ErrEmailTaken) {
-			return jsonError(c, http.StatusConflict, "email already registered")
+			return writeError(c, http.StatusConflict, "email already registered")
 		}
-		return jsonError(c, http.StatusBadRequest, err.Error())
+		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 
 	setSessionCookie(c, token, expiresAt)
@@ -47,15 +47,15 @@ func (h *AuthHandler) SignUp(c echo.Context) error {
 func (h *AuthHandler) Login(c echo.Context) error {
 	var in credentialsInput
 	if err := c.Bind(&in); err != nil {
-		return jsonError(c, http.StatusBadRequest, "invalid request body")
+		return writeError(c, http.StatusBadRequest, "invalid request body")
 	}
 
 	user, token, expiresAt, err := h.service.Login(c.Request().Context(), in.Email, in.Password)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
-			return jsonError(c, http.StatusUnauthorized, "invalid email or password")
+			return writeError(c, http.StatusUnauthorized, "invalid email or password")
 		}
-		return jsonError(c, http.StatusBadRequest, err.Error())
+		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 
 	setSessionCookie(c, token, expiresAt)
@@ -75,12 +75,12 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 func (h *AuthHandler) Me(c echo.Context) error {
 	cookie, err := c.Cookie(middleware.SessionCookieName)
 	if err != nil {
-		return jsonError(c, http.StatusUnauthorized, "not logged in")
+		return writeError(c, http.StatusUnauthorized, "not logged in")
 	}
 
 	user, err := h.service.CurrentUser(c.Request().Context(), cookie.Value)
 	if err != nil {
-		return jsonError(c, http.StatusUnauthorized, "not logged in")
+		return writeError(c, http.StatusUnauthorized, "not logged in")
 	}
 	return c.JSON(http.StatusOK, user)
 }

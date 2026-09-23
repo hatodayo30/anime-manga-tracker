@@ -17,7 +17,10 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
 	"github.com/hatodayo30/anime-manga-tracker/internal/translate"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/search"
+	translateusecase "github.com/hatodayo30/anime-manga-tracker/internal/usecase/translate"
 )
 
 func main() {
@@ -53,11 +56,14 @@ func run() error {
 
 	anilistClient := anilist.NewClient()
 	jikanClient := jikan.NewClient()
-	searchHandler := handler.NewSearchHandler(anilistClient, jikanClient)
-	homeHandler := handler.NewHomeHandler(anilistClient, jikanClient)
+	searchUsecase := search.NewUsecase(anilistClient, jikanClient)
+	searchHandler := handler.NewSearchHandler(searchUsecase)
+	homeUsecase := home.NewUsecase(anilistClient, jikanClient)
+	homeHandler := handler.NewHomeHandler(homeUsecase)
 
 	translateClient := translate.NewClient()
-	translateHandler := handler.NewTranslateHandler(translateClient)
+	translateUsecase := translateusecase.NewUsecase(translateClient)
+	translateHandler := handler.NewTranslateHandler(translateUsecase)
 
 	e := handler.NewRouter(handler.Handlers{
 		Record:      recordHandler,

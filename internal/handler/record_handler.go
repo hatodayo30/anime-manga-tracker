@@ -29,7 +29,7 @@ func (h *RecordHandler) List(c echo.Context) error {
 
 	records, err := h.usecase.List(c.Request().Context(), userID, mediaType, status)
 	if err != nil {
-		return jsonError(c, http.StatusBadRequest, err.Error())
+		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 	if records == nil {
 		records = []*domain.Record{}
@@ -43,12 +43,12 @@ func (h *RecordHandler) Create(c echo.Context) error {
 
 	var in domain.NewRecordInput
 	if err := c.Bind(&in); err != nil {
-		return jsonError(c, http.StatusBadRequest, "invalid request body")
+		return writeError(c, http.StatusBadRequest, "invalid request body")
 	}
 
 	rec, err := h.usecase.AddOrUpdateStatus(c.Request().Context(), userID, in)
 	if err != nil {
-		return jsonError(c, http.StatusBadRequest, err.Error())
+		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 	return c.JSON(http.StatusCreated, rec)
 }
@@ -59,20 +59,20 @@ func (h *RecordHandler) Update(c echo.Context) error {
 
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		return jsonError(c, http.StatusBadRequest, "invalid id")
+		return writeError(c, http.StatusBadRequest, "invalid id")
 	}
 
 	var in domain.UpdateRecordInput
 	if err := c.Bind(&in); err != nil {
-		return jsonError(c, http.StatusBadRequest, "invalid request body")
+		return writeError(c, http.StatusBadRequest, "invalid request body")
 	}
 
 	rec, err := h.usecase.UpdateProgressOrStatus(c.Request().Context(), userID, id, in)
 	if err != nil {
 		if errors.Is(err, record.ErrNotFound) {
-			return jsonError(c, http.StatusNotFound, "record not found")
+			return writeError(c, http.StatusNotFound, "record not found")
 		}
-		return jsonError(c, http.StatusBadRequest, err.Error())
+		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 	return c.JSON(http.StatusOK, rec)
 }
@@ -83,14 +83,14 @@ func (h *RecordHandler) Delete(c echo.Context) error {
 
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		return jsonError(c, http.StatusBadRequest, "invalid id")
+		return writeError(c, http.StatusBadRequest, "invalid id")
 	}
 
 	if err := h.usecase.Delete(c.Request().Context(), userID, id); err != nil {
 		if errors.Is(err, record.ErrNotFound) {
-			return jsonError(c, http.StatusNotFound, "record not found")
+			return writeError(c, http.StatusNotFound, "record not found")
 		}
-		return jsonError(c, http.StatusBadRequest, err.Error())
+		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 	return c.NoContent(http.StatusNoContent)
 }
