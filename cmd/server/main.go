@@ -72,7 +72,7 @@ func run() error {
 		Home:        homeHandler,
 		Translate:   translateHandler,
 		RequireUser: authMiddleware.RequireUser,
-		WebDir:      "web",
+		WebDir:      "frontend/dist",
 	})
 
 	srv := &http.Server{
