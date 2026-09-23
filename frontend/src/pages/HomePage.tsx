@@ -1,20 +1,28 @@
-import { useEffect, useState } from 'react'
-import { api, type Me } from '../lib/api'
+import { Link } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 
 export function HomePage() {
-  const [status, setStatus] = useState('checking API connection...')
-
-  useEffect(() => {
-    api
-      .getMe()
-      .then((me: Me) => setStatus(`API connected as ${me.email}`))
-      .catch(() => setStatus('API connected (not logged in)'))
-  }, [])
+  const { user, loading, logout } = useAuth()
 
   return (
-    <main>
+    <main style={{ padding: 'var(--space-6)' }}>
       <h1>anime-manga-tracker</h1>
-      <p>{status}</p>
+      {loading ? (
+        <p className="text-muted">読み込み中...</p>
+      ) : user ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
+          <p>ログイン中: {user.email}</p>
+          <button className="btn btn-secondary" onClick={() => logout()}>
+            ログアウト
+          </button>
+        </div>
+      ) : (
+        <p>
+          <Link className="btn btn-primary" to="/login">
+            ログイン
+          </Link>
+        </p>
+      )}
     </main>
   )
 }

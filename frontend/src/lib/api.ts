@@ -20,4 +20,9 @@ export interface Me {
 
 export const api = {
   getMe: () => request<Me>('/auth/me'),
+  login: (body: { email: string; password: string }) =>
+    request<Me>('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
+  signup: (body: { email: string; password: string }) =>
+    request<Me>('/auth/signup', { method: 'POST', body: JSON.stringify(body) }),
+  logout: () => request<null>('/auth/logout', { method: 'POST' }),
 }
