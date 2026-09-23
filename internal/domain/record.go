@@ -1,5 +1,5 @@
-// Package model はアプリのドメインモデルを定義する。
-package model
+// Package domain はアプリのドメインモデルを定義する。
+package domain
 
 import "time"
 

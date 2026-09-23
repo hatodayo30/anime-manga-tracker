@@ -1,55 +1,54 @@
-// Package middleware は net/http ハンドラを横断する共通処理を提供する。
+// Package middleware は echo.HandlerFunc を横断する共通処理を提供する。
 package middleware
 
 import (
 	"context"
 	"net/http"
 
-	"github.com/hatodayo30/anime-manga-tracker/internal/model"
-	"github.com/hatodayo30/anime-manga-tracker/internal/service"
+	"github.com/labstack/echo/v4"
+
+	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 )
 
 const SessionCookieName = "session_token"
 
-type contextKey int
+const userContextKey = "user"
 
-const userContextKey contextKey = iota
+// AuthService は Auth がログイン中ユーザーの解決に必要とする操作を定義する。
+// usecase/auth.Service がこれを満たす。
+type AuthService interface {
+	CurrentUser(ctx context.Context, token string) (*domain.User, error)
+}
 
 // Auth はセッションCookieの検証を行うミドルウェアファクトリ。
 type Auth struct {
-	authService *service.AuthService
+	authService AuthService
 }
 
-func NewAuth(authService *service.AuthService) *Auth {
+func NewAuth(authService AuthService) *Auth {
 	return &Auth{authService: authService}
 }
 
 // RequireUser はログイン必須のハンドラに被せる。未ログインなら401を返す。
-func (a *Auth) RequireUser(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user, err := a.userFromRequest(r)
+func (a *Auth) RequireUser(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		cookie, err := c.Cookie(SessionCookieName)
 		if err != nil {
-			http.Error(w, `{"error":"login required"}`, http.StatusUnauthorized)
-			return
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "login required"})
 		}
-		next(w, r.WithContext(withUser(r.Context(), user)))
+
+		user, err := a.authService.CurrentUser(c.Request().Context(), cookie.Value)
+		if err != nil {
+			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "login required"})
+		}
+
+		c.Set(userContextKey, user)
+		return next(c)
 	}
 }
 
-func (a *Auth) userFromRequest(r *http.Request) (*model.User, error) {
-	cookie, err := r.Cookie(SessionCookieName)
-	if err != nil {
-		return nil, err
-	}
-	return a.authService.CurrentUser(r.Context(), cookie.Value)
-}
-
-func withUser(ctx context.Context, u *model.User) context.Context {
-	return context.WithValue(ctx, userContextKey, u)
-}
-
-// UserFromContext は RequireUser を通ったリクエストのコンテキストからユーザーを取り出す。
-func UserFromContext(ctx context.Context) *model.User {
-	u, _ := ctx.Value(userContextKey).(*model.User)
+// UserFromContext は RequireUser を通ったリクエストの echo.Context からユーザーを取り出す。
+func UserFromContext(c echo.Context) *domain.User {
+	u, _ := c.Get(userContextKey).(*domain.User)
 	return u
 }

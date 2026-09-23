@@ -1,4 +1,5 @@
-package service
+// Package auth は認証・セッションまわりのユースケースを担う。
+package auth
 
 import (
 	"context"
@@ -11,28 +12,24 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/hatodayo30/anime-manga-tracker/internal/model"
-	"github.com/hatodayo30/anime-manga-tracker/internal/repository"
+	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 )
 
-var (
-	ErrInvalidCredentials = errors.New("invalid email or password")
-	ErrEmailTaken         = repository.ErrEmailTaken
-)
+var ErrInvalidCredentials = errors.New("invalid email or password")
 
 const SessionTTL = 30 * 24 * time.Hour
 
-type AuthService struct {
-	users    *repository.UserRepository
-	sessions *repository.SessionRepository
+type Service struct {
+	users    UserRepository
+	sessions SessionRepository
 }
 
-func NewAuthService(users *repository.UserRepository, sessions *repository.SessionRepository) *AuthService {
-	return &AuthService{users: users, sessions: sessions}
+func NewService(users UserRepository, sessions SessionRepository) *Service {
+	return &Service{users: users, sessions: sessions}
 }
 
 // SignUp はユーザーを作成し、ログイン済みとして扱うセッションを発行する。
-func (s *AuthService) SignUp(ctx context.Context, email, password string) (*model.User, string, time.Time, error) {
+func (s *Service) SignUp(ctx context.Context, email, password string) (*domain.User, string, time.Time, error) {
 	email = normalizeEmail(email)
 	if email == "" || !strings.Contains(email, "@") {
 		return nil, "", time.Time{}, fmt.Errorf("invalid email")
@@ -59,12 +56,12 @@ func (s *AuthService) SignUp(ctx context.Context, email, password string) (*mode
 }
 
 // Login はメール/パスワードを検証し、成功すればセッションを発行する。
-func (s *AuthService) Login(ctx context.Context, email, password string) (*model.User, string, time.Time, error) {
+func (s *Service) Login(ctx context.Context, email, password string) (*domain.User, string, time.Time, error) {
 	email = normalizeEmail(email)
 
 	userWithHash, err := s.users.FindByEmail(ctx, email)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			return nil, "", time.Time{}, ErrInvalidCredentials
 		}
 		return nil, "", time.Time{}, err
@@ -81,7 +78,7 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*model
 	return &userWithHash.User, token, expiresAt, nil
 }
 
-func (s *AuthService) Logout(ctx context.Context, token string) error {
+func (s *Service) Logout(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
 	}
@@ -89,14 +86,14 @@ func (s *AuthService) Logout(ctx context.Context, token string) error {
 }
 
 // CurrentUser はセッショントークンからログイン中ユーザーを引く。
-func (s *AuthService) CurrentUser(ctx context.Context, token string) (*model.User, error) {
+func (s *Service) CurrentUser(ctx context.Context, token string) (*domain.User, error) {
 	if token == "" {
-		return nil, repository.ErrNotFound
+		return nil, ErrNotFound
 	}
 	return s.sessions.FindUser(ctx, token)
 }
 
-func (s *AuthService) createSession(ctx context.Context, userID int64) (string, time.Time, error) {
+func (s *Service) createSession(ctx context.Context, userID int64) (string, time.Time, error) {
 	token, err := generateToken()
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("generate token: %w", err)

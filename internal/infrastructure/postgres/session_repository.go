@@ -1,4 +1,4 @@
-package repository
+package postgres
 
 import (
 	"context"
@@ -9,7 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/hatodayo30/anime-manga-tracker/internal/model"
+	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 )
 
 type SessionRepository struct {
@@ -19,6 +20,8 @@ type SessionRepository struct {
 func NewSessionRepository(pool *pgxpool.Pool) *SessionRepository {
 	return &SessionRepository{pool: pool}
 }
+
+var _ auth.SessionRepository = (*SessionRepository)(nil)
 
 func (r *SessionRepository) Create(ctx context.Context, token string, userID int64, expiresAt time.Time) error {
 	_, err := r.pool.Exec(ctx, `
@@ -31,8 +34,8 @@ func (r *SessionRepository) Create(ctx context.Context, token string, userID int
 }
 
 // FindUser は有効期限内のセッションからユーザーを引く。期限切れ・不存在なら ErrNotFound。
-func (r *SessionRepository) FindUser(ctx context.Context, token string) (*model.User, error) {
-	var u model.User
+func (r *SessionRepository) FindUser(ctx context.Context, token string) (*domain.User, error) {
+	var u domain.User
 	err := r.pool.QueryRow(ctx, `
 		SELECT u.id, u.email, u.created_at
 		FROM sessions s
@@ -41,7 +44,7 @@ func (r *SessionRepository) FindUser(ctx context.Context, token string) (*model.
 	`, token).Scan(&u.ID, &u.Email, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, auth.ErrNotFound
 		}
 		return nil, fmt.Errorf("find session user: %w", err)
 	}

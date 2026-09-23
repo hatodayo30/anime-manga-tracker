@@ -12,11 +12,15 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/anilist"
 	"github.com/hatodayo30/anime-manga-tracker/internal/config"
 	"github.com/hatodayo30/anime-manga-tracker/internal/handler"
+	"github.com/hatodayo30/anime-manga-tracker/internal/infrastructure/postgres"
 	"github.com/hatodayo30/anime-manga-tracker/internal/jikan"
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
-	"github.com/hatodayo30/anime-manga-tracker/internal/repository"
-	"github.com/hatodayo30/anime-manga-tracker/internal/service"
 	"github.com/hatodayo30/anime-manga-tracker/internal/translate"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/search"
+	translateusecase "github.com/hatodayo30/anime-manga-tracker/internal/usecase/translate"
 )
 
 func main() {
@@ -34,59 +38,46 @@ func run() error {
 		return err
 	}
 
-	pool, err := repository.NewPostgresPool(ctx, cfg.DatabaseURL)
+	pool, err := postgres.NewPostgresPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	recordRepo := repository.NewRecordRepository(pool)
-	recordService := service.NewRecordService(recordRepo)
-	recordHandler := handler.NewRecordHandler(recordService)
+	recordRepo := postgres.NewRecordRepository(pool)
+	recordUsecase := record.NewUsecase(recordRepo)
+	recordHandler := handler.NewRecordHandler(recordUsecase)
 
-	userRepo := repository.NewUserRepository(pool)
-	sessionRepo := repository.NewSessionRepository(pool)
-	authService := service.NewAuthService(userRepo, sessionRepo)
-	authHandler := handler.NewAuthHandler(authService)
-	auth := middleware.NewAuth(authService)
+	userRepo := postgres.NewUserRepository(pool)
+	sessionRepo := postgres.NewSessionRepository(pool)
+	authUsecase := auth.NewService(userRepo, sessionRepo)
+	authHandler := handler.NewAuthHandler(authUsecase)
+	authMiddleware := middleware.NewAuth(authUsecase)
 
 	anilistClient := anilist.NewClient()
 	jikanClient := jikan.NewClient()
-	searchHandler := handler.NewSearchHandler(anilistClient, jikanClient)
-	homeHandler := handler.NewHomeHandler(anilistClient, jikanClient)
+	searchUsecase := search.NewUsecase(anilistClient, jikanClient)
+	searchHandler := handler.NewSearchHandler(searchUsecase)
+	homeUsecase := home.NewUsecase(anilistClient, jikanClient)
+	homeHandler := handler.NewHomeHandler(homeUsecase)
 
 	translateClient := translate.NewClient()
-	translateHandler := handler.NewTranslateHandler(translateClient)
+	translateUsecase := translateusecase.NewUsecase(translateClient)
+	translateHandler := handler.NewTranslateHandler(translateUsecase)
 
-	mux := http.NewServeMux()
-
-	// ログイン必須（自分のライブラリ）
-	mux.HandleFunc("GET /api/records", auth.RequireUser(recordHandler.List))
-	mux.HandleFunc("POST /api/records", auth.RequireUser(recordHandler.Create))
-	mux.HandleFunc("PATCH /api/records/{id}", auth.RequireUser(recordHandler.Update))
-	mux.HandleFunc("DELETE /api/records/{id}", auth.RequireUser(recordHandler.Delete))
-
-	// ログイン不要（公開データ）
-	mux.HandleFunc("GET /api/search", searchHandler.Search)
-	mux.HandleFunc("GET /api/anilist/media", searchHandler.ByIDs)
-	mux.HandleFunc("GET /api/anilist/relations", searchHandler.Relations)
-	mux.HandleFunc("GET /api/recommendations", searchHandler.Recommendations)
-	mux.HandleFunc("GET /api/home/season-anime", homeHandler.SeasonAnime)
-	mux.HandleFunc("GET /api/home/trending", homeHandler.Trending)
-	mux.HandleFunc("GET /api/home/trending-manga", homeHandler.TrendingManga)
-	mux.HandleFunc("POST /api/translate", translateHandler.Translate)
-
-	// 認証
-	mux.HandleFunc("POST /api/auth/signup", authHandler.SignUp)
-	mux.HandleFunc("POST /api/auth/login", authHandler.Login)
-	mux.HandleFunc("POST /api/auth/logout", authHandler.Logout)
-	mux.HandleFunc("GET /api/auth/me", authHandler.Me)
-
-	mux.Handle("/", handler.NewStaticHandler("web"))
+	e := handler.NewRouter(handler.Handlers{
+		Record:      recordHandler,
+		Auth:        authHandler,
+		Search:      searchHandler,
+		Home:        homeHandler,
+		Translate:   translateHandler,
+		RequireUser: authMiddleware.RequireUser,
+		WebDir:      "web",
+	})
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           mux,
+		Handler:           e,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
