@@ -19,7 +19,7 @@ type Handlers struct {
 
 // NewRouter はEchoのルーティングを構築する。
 //
-// records はEcho化されたハンドラをそのまま登録する。auth/search/home/translate は
+// records/auth はEcho化されたハンドラをそのまま登録する。search/home/translate は
 // net/http ベースのハンドラのまま（次段階で移行予定）なので echo.WrapHandler で接続する。
 func NewRouter(h Handlers) *echo.Echo {
 	e := echo.New()
@@ -40,10 +40,10 @@ func NewRouter(h Handlers) *echo.Echo {
 	e.GET("/api/home/trending-manga", echo.WrapHandler(http.HandlerFunc(h.Home.TrendingManga)))
 	e.POST("/api/translate", echo.WrapHandler(http.HandlerFunc(h.Translate.Translate)))
 
-	e.POST("/api/auth/signup", echo.WrapHandler(http.HandlerFunc(h.Auth.SignUp)))
-	e.POST("/api/auth/login", echo.WrapHandler(http.HandlerFunc(h.Auth.Login)))
-	e.POST("/api/auth/logout", echo.WrapHandler(http.HandlerFunc(h.Auth.Logout)))
-	e.GET("/api/auth/me", echo.WrapHandler(http.HandlerFunc(h.Auth.Me)))
+	e.POST("/api/auth/signup", h.Auth.SignUp)
+	e.POST("/api/auth/login", h.Auth.Login)
+	e.POST("/api/auth/logout", h.Auth.Logout)
+	e.GET("/api/auth/me", h.Auth.Me)
 
 	e.Any("/*", echo.WrapHandler(NewStaticHandler(h.WebDir)))
 

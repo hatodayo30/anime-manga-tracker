@@ -10,15 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 )
-
-var ErrEmailTaken = errors.New("email already registered")
-
-// UserWithHash はログイン検証時にのみ使う内部表現（password_hash を含む）。
-type UserWithHash struct {
-	domain.User
-	PasswordHash string
-}
 
 type UserRepository struct {
 	pool *pgxpool.Pool
@@ -27,6 +20,8 @@ type UserRepository struct {
 func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 	return &UserRepository{pool: pool}
 }
+
+var _ auth.UserRepository = (*UserRepository)(nil)
 
 // Create はユーザーを作成する。email は UNIQUE 制約により重複登録を防ぐ。
 func (r *UserRepository) Create(ctx context.Context, email, passwordHash string) (*domain.User, error) {
@@ -38,7 +33,7 @@ func (r *UserRepository) Create(ctx context.Context, email, passwordHash string)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
-			return nil, ErrEmailTaken
+			return nil, auth.ErrEmailTaken
 		}
 		return nil, fmt.Errorf("create user: %w", err)
 	}
@@ -46,14 +41,14 @@ func (r *UserRepository) Create(ctx context.Context, email, passwordHash string)
 }
 
 // FindByEmail はログイン時にパスワード検証するためハッシュ込みで返す。
-func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*UserWithHash, error) {
-	var u UserWithHash
+func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*auth.UserWithHash, error) {
+	var u auth.UserWithHash
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, email, password_hash, created_at FROM users WHERE email = $1
 	`, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return nil, auth.ErrNotFound
 		}
 		return nil, fmt.Errorf("find user by email: %w", err)
 	}

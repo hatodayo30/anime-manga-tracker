@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/labstack/echo/v4"
+
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 )
@@ -23,76 +25,68 @@ type credentialsInput struct {
 }
 
 // SignUp handles POST /api/auth/signup
-func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) SignUp(c echo.Context) error {
 	var in credentialsInput
-	if err := readJSON(r, &in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.Bind(&in); err != nil {
+		return jsonError(c, http.StatusBadRequest, "invalid request body")
 	}
 
-	user, token, expiresAt, err := h.service.SignUp(r.Context(), in.Email, in.Password)
+	user, token, expiresAt, err := h.service.SignUp(c.Request().Context(), in.Email, in.Password)
 	if err != nil {
 		if errors.Is(err, auth.ErrEmailTaken) {
-			writeError(w, http.StatusConflict, "email already registered")
-			return
+			return jsonError(c, http.StatusConflict, "email already registered")
 		}
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return jsonError(c, http.StatusBadRequest, err.Error())
 	}
 
-	setSessionCookie(w, token, expiresAt)
-	writeJSON(w, http.StatusCreated, user)
+	setSessionCookie(c, token, expiresAt)
+	return c.JSON(http.StatusCreated, user)
 }
 
 // Login handles POST /api/auth/login
-func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) Login(c echo.Context) error {
 	var in credentialsInput
-	if err := readJSON(r, &in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.Bind(&in); err != nil {
+		return jsonError(c, http.StatusBadRequest, "invalid request body")
 	}
 
-	user, token, expiresAt, err := h.service.Login(r.Context(), in.Email, in.Password)
+	user, token, expiresAt, err := h.service.Login(c.Request().Context(), in.Email, in.Password)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
-			writeError(w, http.StatusUnauthorized, "invalid email or password")
-			return
+			return jsonError(c, http.StatusUnauthorized, "invalid email or password")
 		}
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return jsonError(c, http.StatusBadRequest, err.Error())
 	}
 
-	setSessionCookie(w, token, expiresAt)
-	writeJSON(w, http.StatusOK, user)
+	setSessionCookie(c, token, expiresAt)
+	return c.JSON(http.StatusOK, user)
 }
 
 // Logout handles POST /api/auth/logout
-func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(middleware.SessionCookieName); err == nil {
-		_ = h.service.Logout(r.Context(), cookie.Value)
+func (h *AuthHandler) Logout(c echo.Context) error {
+	if cookie, err := c.Cookie(middleware.SessionCookieName); err == nil {
+		_ = h.service.Logout(c.Request().Context(), cookie.Value)
 	}
-	clearSessionCookie(w)
-	w.WriteHeader(http.StatusNoContent)
+	clearSessionCookie(c)
+	return c.NoContent(http.StatusNoContent)
 }
 
 // Me handles GET /api/auth/me — ログイン中なら現在のユーザー、未ログインなら401。
-func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie(middleware.SessionCookieName)
+func (h *AuthHandler) Me(c echo.Context) error {
+	cookie, err := c.Cookie(middleware.SessionCookieName)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
+		return jsonError(c, http.StatusUnauthorized, "not logged in")
 	}
 
-	user, err := h.service.CurrentUser(r.Context(), cookie.Value)
+	user, err := h.service.CurrentUser(c.Request().Context(), cookie.Value)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "not logged in")
-		return
+		return jsonError(c, http.StatusUnauthorized, "not logged in")
 	}
-	writeJSON(w, http.StatusOK, user)
+	return c.JSON(http.StatusOK, user)
 }
 
-func setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
-	http.SetCookie(w, &http.Cookie{
+func setSessionCookie(c echo.Context, token string, expiresAt time.Time) {
+	c.SetCookie(&http.Cookie{
 		Name:     middleware.SessionCookieName,
 		Value:    token,
 		Path:     "/",
@@ -102,8 +96,8 @@ func setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) 
 	})
 }
 
-func clearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
+func clearSessionCookie(c echo.Context) {
+	c.SetCookie(&http.Cookie{
 		Name:     middleware.SessionCookieName,
 		Value:    "",
 		Path:     "/",
