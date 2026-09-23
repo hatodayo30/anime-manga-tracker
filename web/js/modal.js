@@ -19,6 +19,7 @@ function openWorkModal({ item, mediaType, record, user, onChange }) {
 
   let currentRecord = record;
   let pending = false;
+  let editingProgress = false; // 進捗の数値をタップして手動入力しているか
   let translatedSynopsis = null;
   let translationRequested = false;
   let freshInfo = null; // AniListの最新情報（総話数・巻数・放送状況・次話）。放送話数の上限判定に使う。
@@ -63,9 +64,9 @@ function openWorkModal({ item, mediaType, record, user, onChange }) {
     render();
   };
 
-  const adjustProgress = async (delta, total, progressCap) => {
+  const commitProgress = async (n, total, progressCap) => {
     if (!currentRecord || pending) return;
-    let n = Math.max(0, currentRecord.progress + delta);
+    n = Math.max(0, n);
     if (progressCap != null) n = Math.min(n, progressCap);
     if (n === currentRecord.progress) return;
 
@@ -81,6 +82,20 @@ function openWorkModal({ item, mediaType, record, user, onChange }) {
     }
     pending = false;
     render();
+  };
+
+  const adjustProgress = (delta, total, progressCap) => {
+    if (!currentRecord) return;
+    commitProgress(currentRecord.progress + delta, total, progressCap);
+  };
+
+  // 進捗の数値表示をタップして手動入力したときの確定処理。
+  // 値を変えずに閉じた場合も編集モードは必ず抜ける（commitProgressは差分なしなら再描画しないため）。
+  const submitProgressEdit = (rawValue, total, progressCap) => {
+    editingProgress = false;
+    const n = currentRecord ? parseInt(rawValue, 10) : NaN;
+    render();
+    if (currentRecord && !Number.isNaN(n)) commitProgress(n, total, progressCap);
   };
 
   const removeFromLibrary = async () => {
@@ -230,16 +245,69 @@ function openWorkModal({ item, mediaType, record, user, onChange }) {
     if (status === 'active' && currentRecord) {
       const progress = currentRecord.progress;
       const pct = total ? Math.min(100, Math.round((progress / total) * 100)) : 0;
+
+      let progressDisplay;
+      if (editingProgress) {
+        let cancelled = false;
+        const inputProps = {
+          type: 'number',
+          className: 'input input-progress-edit',
+          min: '0',
+          value: String(progress),
+          disabled: pending,
+          onKeydown: (e) => {
+            if (e.key === 'Enter') e.target.blur();
+            else if (e.key === 'Escape') {
+              cancelled = true;
+              editingProgress = false;
+              render();
+            }
+          },
+          onBlur: (e) => {
+            if (cancelled) return;
+            submitProgressEdit(e.target.value, total, progressCap);
+          },
+        };
+        if (progressCap != null) inputProps.max = String(progressCap);
+        const input = el('input', inputProps);
+        queueMicrotask(() => {
+          input.focus();
+          input.select();
+        });
+        progressDisplay = el(
+          'span',
+          { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', minWidth: '86px', justifyContent: 'center' } },
+          [input, unit]
+        );
+      } else {
+        progressDisplay = el(
+          'span',
+          {
+            style: {
+              fontFamily: 'var(--font-heading)',
+              fontSize: '17px',
+              fontWeight: '600',
+              minWidth: '86px',
+              textAlign: 'center',
+              cursor: pending ? 'default' : 'pointer',
+            },
+            title: 'タップして直接入力',
+            onClick: () => {
+              if (pending) return;
+              editingProgress = true;
+              render();
+            },
+          },
+          total ? `${progress} / ${total}${unit}` : `${progress}${unit} / ？${unit}`
+        );
+      }
+
       bottomChildren.push(
         el('div', { style: { marginTop: 'var(--space-4)', display: 'flex', alignItems: 'center', gap: 'var(--space-4)', flexWrap: 'wrap' } }, [
           el('span', { className: 'text-muted', style: { fontSize: '12px' } }, '進捗'),
           el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } }, [
             el('button', { className: 'btn btn-icon', disabled: pending || progress <= 0, onClick: () => adjustProgress(-1, total, progressCap) }, '－'),
-            el(
-              'span',
-              { style: { fontFamily: 'var(--font-heading)', fontSize: '17px', fontWeight: '600', minWidth: '86px', textAlign: 'center' } },
-              total ? `${progress} / ${total}${unit}` : `${progress}${unit} / ？${unit}`
-            ),
+            progressDisplay,
             el('button', { className: 'btn btn-icon', disabled: pending || (progressCap != null && progress >= progressCap), onClick: () => adjustProgress(1, total, progressCap) }, '＋'),
           ]),
           total
