@@ -163,6 +163,7 @@ export function LibraryPage() {
                 item={r}
                 pct={pct}
                 caption={caption}
+                rating={r.rating}
                 onClick={() => openWorkModal({ item: r, mediaType: kind, record: r, onChange: reload })}
               />
             )

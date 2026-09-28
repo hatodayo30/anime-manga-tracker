@@ -13,6 +13,7 @@ export function PosterCard({
   caption,
   pct,
   ranked,
+  rating,
   onClick,
 }: {
   item: PosterItem
@@ -21,6 +22,7 @@ export function PosterCard({
   caption?: string | null
   pct?: number | null
   ranked?: number
+  rating?: number | null
   onClick?: () => void
 }) {
   return (
@@ -37,6 +39,12 @@ export function PosterCard({
         {badgeLabel && <span className="poster-badge">{badgeLabel}</span>}
       </Thumb>
       <div className="poster-title">{item.title}</div>
+      {rating != null && rating > 0 && (
+        <div className="poster-rating" aria-label={`評価 ★${rating}`}>
+          {'★'.repeat(rating)}
+          <span className="poster-rating-empty">{'★'.repeat(5 - rating)}</span>
+        </div>
+      )}
       {pct != null && (
         <div className="poster-bar">
           <div className="poster-bar-fill" style={{ width: `${pct}%` }} />

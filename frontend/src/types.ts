@@ -18,6 +18,8 @@ export interface LibraryRecord {
   progress: number
   total: number | null
   nextAiringAt: string | null
+  rating: number | null
+  memo: string
   createdAt: string
   updatedAt: string
 }
@@ -69,4 +71,7 @@ export interface NewRecordInput {
 export interface UpdateRecordInput {
   status?: Status
   progress?: number
+  // 1〜5で評価をセット、0で未評価に戻す。
+  rating?: number
+  memo?: string
 }

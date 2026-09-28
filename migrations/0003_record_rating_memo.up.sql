@@ -1,0 +1,3 @@
+ALTER TABLE records
+    ADD COLUMN rating SMALLINT CHECK (rating BETWEEN 1 AND 5),
+    ADD COLUMN memo    TEXT NOT NULL DEFAULT '';

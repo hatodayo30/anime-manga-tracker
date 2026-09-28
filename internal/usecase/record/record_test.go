@@ -142,6 +142,8 @@ func TestUsecase_AddOrUpdateStatus_DelegatesToRepository(t *testing.T) {
 func TestUsecase_UpdateProgressOrStatus_Validation(t *testing.T) {
 	invalidStatus := domain.Status("paused")
 	negativeProgress := -1
+	tooHighRating := 6
+	negativeRating := -1
 
 	tests := []struct {
 		name string
@@ -149,6 +151,8 @@ func TestUsecase_UpdateProgressOrStatus_Validation(t *testing.T) {
 	}{
 		{"invalid status", domain.UpdateRecordInput{Status: &invalidStatus}},
 		{"negative progress", domain.UpdateRecordInput{Progress: &negativeProgress}},
+		{"rating too high", domain.UpdateRecordInput{Rating: &tooHighRating}},
+		{"negative rating", domain.UpdateRecordInput{Rating: &negativeRating}},
 	}
 
 	for _, tt := range tests {

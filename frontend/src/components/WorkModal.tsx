@@ -32,6 +32,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const [pending, setPending] = useState(false)
   const [editingProgress, setEditingProgress] = useState(false)
   const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const [ratingMemoOpen, setRatingMemoOpen] = useState(() => !!(record?.rating || record?.memo))
   const [translatedSynopsis, setTranslatedSynopsis] = useState<string | null>(null)
   const [freshInfo, setFreshInfo] = useState<FreshInfo | null>(null)
   const [relatedWorks, setRelatedWorks] = useState<RelatedWork[] | null>(null)
@@ -136,6 +137,32 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const adjustProgress = (delta: number, total: number | null, progressCap: number | null) => {
     if (!currentRecord) return
     commitProgress(currentRecord.progress + delta, total, progressCap)
+  }
+
+  const saveRating = async (n: number) => {
+    if (!currentRecord || pending) return
+    setPending(true)
+    try {
+      const next = await api.updateRecord(currentRecord.id, { rating: n })
+      setCurrentRecord(next)
+      onChange?.()
+    } catch (err) {
+      alert(`評価の保存に失敗しました: ${err instanceof Error ? err.message : err}`)
+    }
+    setPending(false)
+  }
+
+  const saveMemo = async (text: string) => {
+    if (!currentRecord || pending || text === currentRecord.memo) return
+    setPending(true)
+    try {
+      const next = await api.updateRecord(currentRecord.id, { memo: text })
+      setCurrentRecord(next)
+      onChange?.()
+    } catch (err) {
+      alert(`メモの保存に失敗しました: ${err instanceof Error ? err.message : err}`)
+    }
+    setPending(false)
   }
 
   const removeFromLibrary = async () => {
@@ -305,6 +332,44 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
           </div>
         </div>
 
+        {currentRecord && (
+          <div style={{ padding: '0 var(--space-6) var(--space-6)' }}>
+            <div style={{ borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-6)' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+                role="button"
+                tabIndex={0}
+                aria-expanded={ratingMemoOpen}
+                onClick={() => setRatingMemoOpen((v) => !v)}
+                onKeyDown={activateOnKey(() => setRatingMemoOpen((v) => !v))}
+              >
+                <span className="text-muted" style={{ fontSize: 12 }}>
+                  評価・感想
+                  {!ratingMemoOpen && currentRecord.rating ? ` ・ ${'★'.repeat(currentRecord.rating)}` : ''}
+                </span>
+                <button type="button" className="link-btn" style={{ fontSize: 11 }}>
+                  {ratingMemoOpen ? '閉じる' : currentRecord.rating || currentRecord.memo ? '編集' : '＋ 記録する'}
+                </button>
+              </div>
+
+              {ratingMemoOpen && (
+                <div style={{ marginTop: 'var(--space-4)' }}>
+                  <StarRating value={currentRecord.rating} disabled={pending} onChange={saveRating} />
+                  <textarea
+                    key={currentRecord.id}
+                    className="input"
+                    style={{ marginTop: 'var(--space-3)', minHeight: 64, borderRadius: 'var(--radius-md)', resize: 'vertical', fontFamily: 'inherit' }}
+                    placeholder="一言メモ（感想など）"
+                    defaultValue={currentRecord.memo}
+                    disabled={pending}
+                    onBlur={(e) => saveMemo(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {relatedWorks && relatedWorks.length > 0 && (
           <div style={{ padding: '0 var(--space-6) var(--space-6)' }}>
             <div style={{ borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-6)' }}>
@@ -335,6 +400,39 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// 星をタップして評価(1〜5)をセットする。現在の評価と同じ星を再タップすると評価を解除する(0を送信)。
+function StarRating({ value, disabled, onChange }: { value: number | null; disabled: boolean; onChange: (n: number) => void }) {
+  return (
+    <div role="radiogroup" aria-label="評価" style={{ display: 'flex', gap: 2 }}>
+      {[1, 2, 3, 4, 5].map((n) => {
+        const filled = value != null && n <= value
+        return (
+          <button
+            key={n}
+            type="button"
+            disabled={disabled}
+            role="radio"
+            aria-checked={value === n}
+            aria-label={`★${n}`}
+            onClick={() => onChange(value === n ? 0 : n)}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 3,
+              lineHeight: 1,
+              fontSize: 22,
+              cursor: disabled ? 'default' : 'pointer',
+              color: filled ? 'var(--color-accent)' : 'var(--color-neutral-800)',
+            }}
+          >
+            {filled ? '★' : '☆'}
+          </button>
+        )
+      })}
     </div>
   )
 }
