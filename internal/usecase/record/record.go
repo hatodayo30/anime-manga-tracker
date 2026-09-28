@@ -51,6 +51,9 @@ func (u *Usecase) UpdateProgressOrStatus(ctx context.Context, userID, id int64, 
 	if in.Progress != nil && *in.Progress < 0 {
 		return nil, fmt.Errorf("progress must be >= 0")
 	}
+	if in.Rating != nil && (*in.Rating < 0 || *in.Rating > 5) {
+		return nil, fmt.Errorf("rating must be between 0 and 5")
+	}
 	return u.repo.Update(ctx, userID, id, in)
 }
 

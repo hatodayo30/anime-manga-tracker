@@ -27,14 +27,14 @@ var _ record.Repository = (*RecordRepository)(nil)
 
 const recordColumns = `
 	id, anilist_id, media_type, title, cover_image_url, genres,
-	status, progress, total, next_airing_at, created_at, updated_at
+	status, progress, total, next_airing_at, rating, memo, created_at, updated_at
 `
 
 func scanRecord(row pgx.Row) (*domain.Record, error) {
 	var r domain.Record
 	err := row.Scan(
 		&r.ID, &r.AniListID, &r.MediaType, &r.Title, &r.CoverImageURL, &r.Genres,
-		&r.Status, &r.Progress, &r.Total, &r.NextAiringAt, &r.CreatedAt, &r.UpdatedAt,
+		&r.Status, &r.Progress, &r.Total, &r.NextAiringAt, &r.Rating, &r.Memo, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -97,18 +97,21 @@ func (r *RecordRepository) Upsert(ctx context.Context, userID int64, in domain.N
 	return rec, nil
 }
 
-// Update は指定IDの記録のステータス/進捗を部分更新する。他ユーザーの記録は更新できない。
+// Update は指定IDの記録のステータス/進捗/評価/メモを部分更新する。他ユーザーの記録は更新できない。
+// rating は 0 を渡すと NULL（未評価）に戻す特別扱い。
 func (r *RecordRepository) Update(ctx context.Context, userID, id int64, in domain.UpdateRecordInput) (*domain.Record, error) {
 	query := fmt.Sprintf(`
 		UPDATE records SET
 			status = COALESCE($3, status),
 			progress = COALESCE($4, progress),
+			rating = CASE WHEN $5::smallint IS NULL THEN rating WHEN $5::smallint = 0 THEN NULL ELSE $5::smallint END,
+			memo = COALESCE($6, memo),
 			updated_at = now()
 		WHERE id = $1 AND user_id = $2
 		RETURNING %s
 	`, recordColumns)
 
-	row := r.pool.QueryRow(ctx, query, id, userID, in.Status, in.Progress)
+	row := r.pool.QueryRow(ctx, query, id, userID, in.Status, in.Progress, in.Rating, in.Memo)
 	rec, err := scanRecord(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

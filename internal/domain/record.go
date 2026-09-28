@@ -32,6 +32,8 @@ type Record struct {
 	Progress      int        `json:"progress"`
 	Total         *int       `json:"total"`
 	NextAiringAt  *time.Time `json:"nextAiringAt"`
+	Rating        *int       `json:"rating"`
+	Memo          string     `json:"memo"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
 }
@@ -49,10 +51,13 @@ type NewRecordInput struct {
 	NextAiringAt *int64 `json:"nextAiringAt"`
 }
 
-// UpdateRecordInput は記録更新リクエストのボディ。ステータスか進捗のどちらか一方でも良い。
+// UpdateRecordInput は記録更新リクエストのボディ。どのフィールドも省略可（nilは「変更なし」を意味する）。
+// Rating は 1〜5 で評価をセットし、0 を渡すと評価を未入力（NULL）に戻す。
 type UpdateRecordInput struct {
 	Status   *Status `json:"status"`
 	Progress *int    `json:"progress"`
+	Rating   *int    `json:"rating"`
+	Memo     *string `json:"memo"`
 }
 
 func (s Status) Valid() bool {
