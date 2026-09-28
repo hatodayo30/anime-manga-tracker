@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
-import { STATUS_LABELS, colorForTitle, formatScore, translateGenre, translateRelation, unitFor, type MediaKind, type Status } from '../lib/util'
+import { STATUS_LABELS, activateOnKey, colorForTitle, formatScore, translateGenre, translateRelation, unitFor, type MediaKind, type Status } from '../lib/util'
 import type { LibraryRecord, RelatedWork } from '../types'
 import { Thumb } from './Thumb'
 import type { OpenWorkModalOptions, WorkModalItem } from './WorkModalContext'
@@ -31,6 +31,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const [currentRecord, setCurrentRecord] = useState(record)
   const [pending, setPending] = useState(false)
   const [editingProgress, setEditingProgress] = useState(false)
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
   const [translatedSynopsis, setTranslatedSynopsis] = useState<string | null>(null)
   const [freshInfo, setFreshInfo] = useState<FreshInfo | null>(null)
   const [relatedWorks, setRelatedWorks] = useState<RelatedWork[] | null>(null)
@@ -139,7 +140,6 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
 
   const removeFromLibrary = async () => {
     if (!currentRecord || pending) return
-    if (!confirm('この作品を記録から外しますか？')) return
     setPending(true)
     try {
       await api.deleteRecord(currentRecord.id)
@@ -149,6 +149,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
       alert(`削除に失敗しました: ${err instanceof Error ? err.message : err}`)
     }
     setPending(false)
+    setConfirmingRemove(false)
   }
 
   const openRelatedWorkModal = (work: RelatedWork) => {
@@ -187,6 +188,9 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
         className="card elev-lg"
         style={{ width: 660, maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', padding: 0, position: 'relative' }}
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="work-modal-title"
       >
         <div
           className="dialog-banner"
@@ -207,7 +211,9 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
             <Thumb item={item} fontSize={38} style={{ width: '132px', aspectRatio: '2/3', boxShadow: 'var(--shadow-md)' }} />
           </div>
           <div style={{ flex: 1, minWidth: 0, paddingTop: 60 }}>
-            <h3 style={{ margin: '0 0 6px', fontSize: 21, lineHeight: 1.3 }}>{item.title}</h3>
+            <h3 id="work-modal-title" style={{ margin: '0 0 6px', fontSize: 21, lineHeight: 1.3 }}>
+              {item.title}
+            </h3>
             <div className="text-muted" style={{ fontSize: 12, marginBottom: 10 }}>
               {metaParts.join('・')}
               {supplementalInfo ? ` ・ ${supplementalInfo}` : ''}
@@ -241,11 +247,22 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
               <span className="text-muted" style={{ fontSize: 12 }}>
                 記録する
               </span>
-              {currentRecord && (
-                <a href="javascript:void(0)" style={{ fontSize: 11 }} onClick={removeFromLibrary}>
-                  記録から外す
-                </a>
-              )}
+              {currentRecord &&
+                (confirmingRemove ? (
+                  <span style={{ fontSize: 11, display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                    本当に外しますか？
+                    <button type="button" className="link-btn" style={{ fontSize: 11 }} onClick={removeFromLibrary}>
+                      はい
+                    </button>
+                    <button type="button" className="link-btn" style={{ fontSize: 11 }} onClick={() => setConfirmingRemove(false)}>
+                      いいえ
+                    </button>
+                  </span>
+                ) : (
+                  <button type="button" className="link-btn" style={{ fontSize: 11 }} onClick={() => setConfirmingRemove(true)}>
+                    記録から外す
+                  </button>
+                ))}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
               {(['done', 'active', 'want'] as const).map((key) => (
@@ -300,6 +317,9 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
                     key={work.anilistId}
                     style={{ flex: 'none', width: 84, cursor: 'pointer' }}
                     onClick={() => openRelatedWorkModal(work)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={activateOnKey(() => openRelatedWorkModal(work))}
                   >
                     <Thumb item={work} fontSize={22} style={{ width: '84px', height: '112px' }} />
                     <div className="tag tag-outline" style={{ fontSize: 10, padding: '2px 8px', margin: '6px 0 3px' }}>
@@ -350,7 +370,13 @@ function ProgressRow({
         進捗
       </span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button type="button" className="btn btn-icon" disabled={pending || progress <= 0} onClick={() => onAdjust(-1)}>
+        <button
+          type="button"
+          className="btn btn-icon"
+          aria-label="進捗を1減らす"
+          disabled={pending || progress <= 0}
+          onClick={() => onAdjust(-1)}
+        >
           －
         </button>
         {editingProgress ? (
@@ -366,7 +392,11 @@ function ProgressRow({
               cursor: pending ? 'default' : 'pointer',
             }}
             title="タップして直接入力"
+            role="button"
+            tabIndex={pending ? undefined : 0}
+            aria-label="進捗数を直接入力する"
             onClick={() => !pending && onEdit()}
+            onKeyDown={pending ? undefined : activateOnKey(onEdit)}
           >
             {total ? `${progress} / ${total}${unit}` : `${progress}${unit} / ？${unit}`}
           </span>
@@ -374,6 +404,7 @@ function ProgressRow({
         <button
           type="button"
           className="btn btn-icon"
+          aria-label="進捗を1増やす"
           disabled={pending || (progressCap != null && progress >= progressCap)}
           onClick={() => onAdjust(1)}
         >
@@ -413,6 +444,7 @@ function ProgressEditInput({
       <input
         type="number"
         className="input input-progress-edit"
+        aria-label="進捗数を直接入力"
         min={0}
         max={progressCap ?? undefined}
         defaultValue={progress}

@@ -6,7 +6,7 @@ import { useWorkModal } from '../components/WorkModalContext'
 import type { WorkModalItem } from '../components/WorkModalContext'
 import { useKind } from '../hooks/useKind'
 import { api } from '../lib/api'
-import { STATUS_LABELS, containsKana, containsKanji, formatScore, kanaToRomaji, translateGenre } from '../lib/util'
+import { STATUS_LABELS, activateOnKey, containsKana, containsKanji, formatScore, kanaToRomaji, translateGenre } from '../lib/util'
 import type { AniListItem, LibraryRecord } from '../types'
 
 // 同じ作品（anilistId）を除いた上で、AniListの人気値（popularity）降順にまとめる。
@@ -233,6 +233,9 @@ function IdleState({
                 className="card elev-sm"
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-3)', padding: '9px var(--space-3)', cursor: 'pointer' }}
                 onClick={() => onOpen(item, record)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={activateOnKey(() => onOpen(item, record))}
               >
                 <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 16, color: 'var(--color-accent)', width: 18, flex: 'none' }}>
                   {i + 1}

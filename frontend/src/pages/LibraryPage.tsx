@@ -125,9 +125,15 @@ export function LibraryPage() {
         <div style={{ marginBottom: 'var(--space-6)' }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {genreChips.map((g) => (
-              <span key={g} className={`tag ${activeGenres.includes(g) ? 'tag-accent' : 'tag-outline'}`} onClick={() => toggleGenre(g)}>
+              <button
+                key={g}
+                type="button"
+                className={`tag ${activeGenres.includes(g) ? 'tag-accent' : 'tag-outline'}`}
+                aria-pressed={activeGenres.includes(g)}
+                onClick={() => toggleGenre(g)}
+              >
                 {translateGenre(g)}
-              </span>
+              </button>
             ))}
           </div>
         </div>

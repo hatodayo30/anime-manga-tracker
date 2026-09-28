@@ -1,3 +1,4 @@
+import { activateOnKey } from '../lib/util'
 import { Thumb } from './Thumb'
 
 interface PosterItem {
@@ -23,7 +24,13 @@ export function PosterCard({
   onClick?: () => void
 }) {
   return (
-    <div className={`poster-card ${ranked != null ? 'poster-card-ranked' : ''}`} onClick={onClick}>
+    <div
+      className={`poster-card ${ranked != null ? 'poster-card-ranked' : ''}`}
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? activateOnKey(onClick) : undefined}
+    >
       {ranked != null && <span className="poster-rank-num">{ranked}</span>}
       <Thumb item={item} fontSize={26} className="poster-thumb">
         {kindLabel && <span className="poster-kindbadge">{kindLabel}</span>}

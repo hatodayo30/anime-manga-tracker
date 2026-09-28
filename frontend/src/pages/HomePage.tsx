@@ -11,6 +11,7 @@ import {
   STATUS_LABELS,
   WEEKDAY_EN_SHORT,
   WEEKDAY_JA,
+  activateOnKey,
   formatScore,
   formatWeekday,
   jstAiringInfo,
@@ -269,7 +270,14 @@ function ScheduleDays({
               </span>
             </div>
             {items.map(({ item, hour, minute }) => (
-              <div key={item.anilistId} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => onOpen(item)}>
+              <div
+                key={item.anilistId}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                onClick={() => onOpen(item)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={activateOnKey(() => onOpen(item))}
+              >
                 <Thumb item={item} width="24px" height="32px" fontSize={12} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 11, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title}</div>
@@ -292,7 +300,7 @@ function RankingPoster({ item, rank, onClick }: { item: MangaRankingItem; rank: 
   const captionParts = [score ? `★${score}` : null, item.malRank ? `MAL #${item.malRank}` : null].filter(Boolean)
 
   return (
-    <div className="poster-card poster-card-ranked" onClick={onClick}>
+    <div className="poster-card poster-card-ranked" onClick={onClick} role="button" tabIndex={0} onKeyDown={activateOnKey(onClick)}>
       <span className="poster-rank-num">{rank}</span>
       <Thumb item={item} fontSize={26} className="poster-thumb" />
       <div className="poster-title">{item.title}</div>

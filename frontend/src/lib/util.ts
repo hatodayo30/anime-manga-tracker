@@ -1,3 +1,5 @@
+import type { KeyboardEvent } from 'react'
+
 export type MediaKind = 'anime' | 'manga'
 export type Status = 'done' | 'active' | 'want'
 
@@ -103,6 +105,16 @@ export function formatWeekday(nextAiringAt: number | string | null | undefined):
   const info = jstAiringInfo(nextAiringAt)
   if (!info) return ''
   return `${WEEKDAY_JA[info.dayIndex]} ${info.hour}:${info.minute}`
+}
+
+// role="button"を付けたdiv/span用: Enter/SpaceキーでもクリックできるようにするためのonKeyDownハンドラ。
+export function activateOnKey(onActivate: () => void) {
+  return (e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onActivate()
+    }
+  }
 }
 
 export function formatScore(score: number | null | undefined): string | null {
