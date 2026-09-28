@@ -35,7 +35,7 @@ export function Thumb({
   }
 
   return (
-    <div className={className} style={style}>
+    <div className={className} style={style} aria-hidden="true">
       {!item.coverImageUrl && initialForTitle(item.title)}
       {children}
     </div>
