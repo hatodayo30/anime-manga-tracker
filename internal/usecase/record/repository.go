@@ -10,6 +10,9 @@ import (
 // ErrNotFound は指定されたIDの記録が存在しない（または他ユーザーの記録である）ことを表す。
 var ErrNotFound = errors.New("record not found")
 
+// ErrInvalidProgressUnit は進捗の単位が作品の種別と噛み合っていない（例: アニメに巻数）ことを表す。
+var ErrInvalidProgressUnit = errors.New("progress unit does not match media type")
+
 // Repository は Usecase が記録の永続化に必要とする操作を定義する。
 // 実装は internal/infrastructure/postgres が提供する。
 type Repository interface {

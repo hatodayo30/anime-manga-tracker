@@ -74,6 +74,9 @@ func (h *RecordHandler) Update(c echo.Context) error {
 		if errors.Is(err, record.ErrNotFound) {
 			return writeError(c, http.StatusNotFound, "record not found")
 		}
+		if errors.Is(err, record.ErrInvalidProgressUnit) {
+			return writeError(c, http.StatusBadRequest, "progress unit does not match media type")
+		}
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 	return c.JSON(http.StatusOK, rec)

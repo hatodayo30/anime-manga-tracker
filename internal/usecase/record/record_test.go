@@ -169,12 +169,62 @@ func TestUsecase_AddOrUpdateStatus_DelegatesToRepository(t *testing.T) {
 	}
 }
 
+// 単位を省略した追加は、種別ごとの既定（アニメ=話数 / 漫画=話数）に解決してから保存する。
+func TestUsecase_AddOrUpdateStatus_DefaultsProgressUnit(t *testing.T) {
+	tests := []struct {
+		mediaType domain.MediaType
+		want      domain.ProgressUnit
+	}{
+		{domain.MediaTypeAnime, domain.ProgressUnitEpisode},
+		{domain.MediaTypeManga, domain.ProgressUnitChapter},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.mediaType), func(t *testing.T) {
+			repo := &fakeRepository{
+				upsertFunc: func(ctx context.Context, userID int64, got domain.NewRecordInput) (*domain.Record, error) {
+					if got.ProgressUnit != tt.want {
+						t.Errorf("progressUnit = %s, want %s", got.ProgressUnit, tt.want)
+					}
+					return &domain.Record{}, nil
+				},
+			}
+			u := record.NewUsecase(repo)
+
+			in := domain.NewRecordInput{MediaType: tt.mediaType, Status: domain.StatusWant, Title: "X"}
+			if _, err := u.AddOrUpdateStatus(context.Background(), 1, in); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// 種別と噛み合わない単位（アニメに巻数など）は保存前に弾く。
+func TestUsecase_AddOrUpdateStatus_RejectsMismatchedProgressUnit(t *testing.T) {
+	repo := &fakeRepository{}
+	u := record.NewUsecase(repo)
+
+	in := domain.NewRecordInput{
+		MediaType:    domain.MediaTypeAnime,
+		Status:       domain.StatusWant,
+		Title:        "X",
+		ProgressUnit: domain.ProgressUnitVolume,
+	}
+	if _, err := u.AddOrUpdateStatus(context.Background(), 1, in); err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if repo.called {
+		t.Error("repository should not be called when validation fails")
+	}
+}
+
 func TestUsecase_UpdateProgressOrStatus_Validation(t *testing.T) {
 	invalidStatus := domain.Status("paused")
 	negativeProgress := -1
 	tooHighRating := 6
 	negativeRating := -1
 	negativeTotal := -1
+	invalidUnit := domain.ProgressUnit("tankobon")
 
 	tests := []struct {
 		name string
@@ -185,6 +235,7 @@ func TestUsecase_UpdateProgressOrStatus_Validation(t *testing.T) {
 		{"rating too high", domain.UpdateRecordInput{Rating: &tooHighRating}},
 		{"negative rating", domain.UpdateRecordInput{Rating: &negativeRating}},
 		{"negative total", domain.UpdateRecordInput{Total: &negativeTotal}},
+		{"invalid progress unit", domain.UpdateRecordInput{ProgressUnit: &invalidUnit}},
 	}
 
 	for _, tt := range tests {

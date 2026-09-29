@@ -2,13 +2,27 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
-import { STATUS_LABELS, activateOnKey, colorForTitle, formatScore, translateGenre, translateRelation, unitFor, type MediaKind, type Status } from '../lib/util'
-import type { LibraryRecord, RelatedWork } from '../types'
+import {
+  STATUS_LABELS,
+  activateOnKey,
+  colorForTitle,
+  convertProgress,
+  defaultProgressUnit,
+  formatScore,
+  translateGenre,
+  translateRelation,
+  unitLabel,
+  type MediaKind,
+  type ProgressUnit,
+  type Status,
+} from '../lib/util'
+import type { LibraryRecord, RelatedWork, UpdateRecordInput } from '../types'
 import { Thumb } from './Thumb'
 import type { OpenWorkModalOptions, WorkModalItem } from './WorkModalContext'
 
 interface FreshInfo {
-  total: number | null // アニメ=話数 / 漫画=巻数
+  total: number | null // アニメ=話数（episodes）/ 漫画=話数（chapters）
+  volumes?: number | null // 漫画の既刊巻数
   airingStatus?: string
   nextEpisode?: number | null
 }
@@ -70,12 +84,19 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
     }
   }, [])
 
-  // AniListの最新情報と保存済みの総数（アニメ=話数 / 漫画=巻数）がズレていたら同期する。
-  // 進捗バーと「全巻/全話読了でdoneへ」の判定がDBの値だけを見るライブラリ画面でも
-  // 正しく効くようにするため。漫画の記録単位を話数から巻数へ切り替えた既存レコードも
-  // モーダルを開いた時点でここで巻数に移行される。
+  // 現在の記録単位。未登録の作品は種別ごとの既定（アニメ=話数 / 漫画=話数）で表示する。
+  const unit: ProgressUnit = currentRecord?.progressUnit ?? defaultProgressUnit(mediaType)
+  // 話数側と巻数側の総数。単位を切り替えたときの総数の差し替えと進捗の換算に両方必要。
+  const chapterTotal = freshInfo?.total ?? item.total ?? null
+  const volumeTotal = freshInfo?.volumes ?? item.volumes ?? null
+  const totalForUnit = (u: ProgressUnit) => (u === 'volume' ? volumeTotal : chapterTotal)
+  const total = totalForUnit(unit) ?? currentRecord?.total ?? null
+
+  // AniListの最新情報と保存済みの総数がズレていたら同期する。進捗バーと「全話/全巻読了でdoneへ」の
+  // 判定がDBの値だけを見るライブラリ画面でも正しく効くようにするため。
+  // 総数が取れなかった場合は手入力の値を消さないよう何もしない。
   useEffect(() => {
-    const fresh = freshInfo?.total
+    const fresh = totalForUnit(unit)
     if (!currentRecord || fresh == null || fresh === currentRecord.total) return
 
     let cancelled = false
@@ -126,6 +147,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
             genres: item.genres || [],
             total: item.total ?? null,
             status: newStatus,
+            progressUnit: defaultProgressUnit(mediaType),
             nextAiringAt: typeof item.nextAiringAt === 'number' ? item.nextAiringAt : null,
           })
       setCurrentRecord(next)
@@ -158,6 +180,28 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const adjustProgress = (delta: number, total: number | null, progressCap: number | null) => {
     if (!currentRecord) return
     commitProgress(currentRecord.progress + delta, total, progressCap)
+  }
+
+  // 話数と巻数を切り替える。総数を新しい単位の値に差し替え、進捗は総数の比率で読み替える。
+  // 総数が分からず換算できない場合は0に戻るので、±で入れ直してもらう。
+  const switchUnit = async (nextUnit: ProgressUnit) => {
+    if (!currentRecord || pending || nextUnit === unit) return
+    const nextTotal = totalForUnit(nextUnit)
+
+    setPending(true)
+    const body: UpdateRecordInput = {
+      progressUnit: nextUnit,
+      progress: convertProgress(currentRecord.progress, totalForUnit(unit), nextTotal),
+      total: nextTotal ?? 0, // 0は「総数不明」としてサーバー側でNULLに戻る
+    }
+    try {
+      const next = await api.updateRecord(currentRecord.id, body)
+      setCurrentRecord(next)
+      onChange?.()
+    } catch (err) {
+      alert(`単位の切り替えに失敗しました: ${err instanceof Error ? err.message : err}`)
+    }
+    setPending(false)
   }
 
   const saveRating = async (n: number) => {
@@ -210,8 +254,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   }
 
   const labels = STATUS_LABELS[mediaType]
-  const unit = unitFor(mediaType)
-  const total = freshInfo?.total ?? item.total ?? currentRecord?.total ?? null
+  const label = unitLabel(unit)
   const status = currentRecord?.status ?? null
   const airingEp =
     mediaType === 'anime' && freshInfo?.airingStatus === 'RELEASING' && freshInfo?.nextEpisode != null
@@ -220,11 +263,16 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const progressCap = airingEp != null ? airingEp : total
 
   const scoreLabel = formatScore(item.score)
-  const metaParts = [mediaType === 'anime' ? 'アニメ' : '漫画', total ? `全${total}${unit}` : '連載中']
+  // 漫画はどちらの単位で記録していても、話数と巻数の両方を見出しに出す（単位を選ぶ判断材料になる）。
+  const volumeParts = mediaType === 'manga' && volumeTotal ? [`全${volumeTotal}巻`] : []
+  const metaParts = [
+    mediaType === 'anime' ? 'アニメ' : '漫画',
+    chapterTotal ? `全${chapterTotal}話` : '連載中',
+    ...volumeParts,
+  ]
   if (scoreLabel) metaParts.push(`★${scoreLabel}`)
 
-  // 漫画の既刊巻数は total（=AniListのvolumes）として metaParts に出るため、ここでは扱わない。
-  const supplementalInfo = airingEp != null ? `現在${airingEp}${unit}放送中` : null
+  const supplementalInfo = airingEp != null ? `現在${airingEp}${label}放送中` : null
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -329,7 +377,9 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
                 progressCap={progressCap}
                 pending={pending}
                 editingProgress={editingProgress}
-                unit={unit}
+                unit={label}
+                // 単位を選べるのは漫画だけ（アニメは常に話数）。
+                unitSwitch={mediaType === 'manga' ? { current: unit, onChange: switchUnit } : null}
                 onEdit={() => setEditingProgress(true)}
                 onCancelEdit={() => setEditingProgress(false)}
                 onSubmitEdit={(raw) => {
@@ -461,6 +511,7 @@ function ProgressRow({
   pending,
   editingProgress,
   unit,
+  unitSwitch,
   onEdit,
   onCancelEdit,
   onSubmitEdit,
@@ -472,6 +523,7 @@ function ProgressRow({
   pending: boolean
   editingProgress: boolean
   unit: string
+  unitSwitch: { current: ProgressUnit; onChange: (next: ProgressUnit) => void } | null
   onEdit: () => void
   onCancelEdit: () => void
   onSubmitEdit: (raw: string) => void
@@ -484,6 +536,24 @@ function ProgressRow({
       <span className="text-muted" style={{ fontSize: 12 }}>
         進捗
       </span>
+      {unitSwitch && (
+        <div className="seg" style={{ width: 'fit-content' }} role="group" aria-label="進捗の単位">
+          {(['chapter', 'volume'] as const).map((u) => (
+            <label key={u} className={`seg-opt${unitSwitch.current === u ? ' checked' : ''}`}>
+              <input
+                type="radio"
+                name="progress-unit"
+                checked={unitSwitch.current === u}
+                disabled={pending}
+                onChange={() => unitSwitch.onChange(u)}
+              />
+              <span className="seg-label" style={{ fontSize: 11, padding: '4px 10px' }}>
+                {u === 'chapter' ? '話数' : '巻数'}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <button
           type="button"

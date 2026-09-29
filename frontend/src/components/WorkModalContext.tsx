@@ -10,7 +10,8 @@ export interface WorkModalItem {
   genres?: string[]
   synopsis?: string
   score?: number | null
-  total?: number | null
+  total?: number | null // アニメ=話数 / 漫画=話数（chapters）
+  volumes?: number | null // 漫画の既刊巻数
   nextAiringAt?: number | string | null
 }
 

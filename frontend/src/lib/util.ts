@@ -122,9 +122,26 @@ export function formatScore(score: number | null | undefined): string | null {
   return (score / 10).toFixed(1)
 }
 
-// 進捗の追跡単位。アニメは話数、漫画は巻数で記録する。
-export function unitFor(kind: MediaKind): string {
-  return kind === 'anime' ? '話' : '巻'
+// 進捗を数える単位。漫画は紙の単行本で追うか電子で話数を追うかが読者・作品ごとに違うため、
+// アプリ全体で固定せず作品（レコード）ごとに保持する。
+export type ProgressUnit = 'episode' | 'chapter' | 'volume'
+
+// ライブラリ追加時の既定。漫画は電子で話数を追う読み方が主流なため chapter を既定にする。
+export function defaultProgressUnit(kind: MediaKind): ProgressUnit {
+  return kind === 'manga' ? 'chapter' : 'episode'
+}
+
+export function unitLabel(unit: ProgressUnit): string {
+  return unit === 'volume' ? '巻' : '話'
+}
+
+// 単位を切り替えたときの進捗の読み替え。話数と巻数の対応は作品ごとに違うので、
+// 総数どうしの比率で概算する（1巻あたりの話数が一定という近似）。
+// どちらかの総数が分からない連載中作品は換算できないため0に戻し、±で入れ直してもらう。
+export function convertProgress(progress: number, fromTotal: number | null, toTotal: number | null): number {
+  if (progress <= 0) return 0
+  if (!fromTotal || !toTotal) return 0
+  return Math.min(toTotal, Math.max(1, Math.floor((progress * toTotal) / fromTotal)))
 }
 
 export type SortKey = 'default' | 'title' | 'score' | 'updated' | 'added'
