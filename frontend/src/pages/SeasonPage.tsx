@@ -32,16 +32,18 @@ export function SeasonPage() {
   const [error, setError] = useState<string | null>(null)
   const [reloadSeq, setReloadSeq] = useState(0)
 
+  // シーズン一覧はseason/yearだけに依存する。ログイン状態やライブラリの更新では取り直さない
+  // （AniListへの問い合わせはレート制限付きで高コストなため、不要な再取得を避ける）。
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
 
-    Promise.all([api.seasonAnime({ season, year }), user ? api.listRecords({ type: 'anime' }) : Promise.resolve([])])
-      .then(([r, l]) => {
+    api
+      .seasonAnime({ season, year })
+      .then((r) => {
         if (cancelled) return
         setResults(r)
-        setLibrary(l)
         setLoading(false)
       })
       .catch((err) => {
@@ -53,7 +55,30 @@ export function SeasonPage() {
     return () => {
       cancelled = true
     }
-  }, [season, year, user, reloadSeq])
+  }, [season, year])
+
+  // ライブラリ（登録済みバッジ用）はseason/yearに依存しないので、ログイン状態が変わったときと
+  // モーダルでの更新後にだけ取り直す。取得に失敗してもバッジが出ないだけなので一覧は止めない。
+  useEffect(() => {
+    if (!user) {
+      setLibrary([])
+      return
+    }
+    let cancelled = false
+
+    api
+      .listRecords({ type: 'anime' })
+      .then((l) => {
+        if (!cancelled) setLibrary(l)
+      })
+      .catch(() => {
+        if (!cancelled) setLibrary([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [user, reloadSeq])
 
   const reload = () => setReloadSeq((n) => n + 1)
   const libraryByAniListId = new Map(library.map((r) => [r.anilistId, r]))

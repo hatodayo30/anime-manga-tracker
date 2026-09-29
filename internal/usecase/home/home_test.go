@@ -2,6 +2,7 @@ package home_test
 
 import (
 	"context"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -11,8 +12,9 @@ import (
 )
 
 type fakeAniList struct {
-	seasonAnimeCalls int32
-	trendingManga    []anilist.SearchResult
+	seasonAnimeCalls    int32
+	seasonAnimeForCalls int32
+	trendingManga       []anilist.SearchResult
 }
 
 func (f *fakeAniList) SeasonAnime(ctx context.Context) ([]anilist.SearchResult, error) {
@@ -21,7 +23,8 @@ func (f *fakeAniList) SeasonAnime(ctx context.Context) ([]anilist.SearchResult, 
 }
 
 func (f *fakeAniList) SeasonAnimeFor(ctx context.Context, season string, year int) ([]anilist.SearchResult, error) {
-	return []anilist.SearchResult{{Title: season}}, nil
+	atomic.AddInt32(&f.seasonAnimeForCalls, 1)
+	return []anilist.SearchResult{{Title: season + ":" + strconv.Itoa(year)}}, nil
 }
 
 func (f *fakeAniList) TrendingAnime(ctx context.Context) ([]anilist.SearchResult, error) {
@@ -53,6 +56,63 @@ func TestUsecase_CurrentSeasonAnime_Caches(t *testing.T) {
 
 	if anilistGW.seasonAnimeCalls != 1 {
 		t.Errorf("expected gateway to be called once (cached on second call), got %d calls", anilistGW.seasonAnimeCalls)
+	}
+}
+
+// シーズンブラウジング（season/year指定）も、同じ組み合わせなら2回目以降はキャッシュから返す。
+// 組み合わせが違えばそれぞれ取得する。
+func TestUsecase_SeasonAnimeFor_CachesPerSeasonAndYear(t *testing.T) {
+	anilistGW := &fakeAniList{}
+	u := home.NewUsecase(anilistGW, &fakeJikan{})
+
+	first, err := u.SeasonAnimeFor(context.Background(), "SPRING", 2025)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	second, err := u.SeasonAnimeFor(context.Background(), "SPRING", 2025)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if anilistGW.seasonAnimeForCalls != 1 {
+		t.Errorf("expected the same season/year to be cached, got %d calls", anilistGW.seasonAnimeForCalls)
+	}
+	if len(second) != 1 || second[0].Title != first[0].Title {
+		t.Errorf("cached result differs from the first: %+v vs %+v", second, first)
+	}
+
+	// シーズンが違えば別キー
+	if _, err := u.SeasonAnimeFor(context.Background(), "SUMMER", 2025); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 年が違っても別キー（season単体をキーにしていないことの確認）
+	if _, err := u.SeasonAnimeFor(context.Background(), "SPRING", 2024); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if anilistGW.seasonAnimeForCalls != 3 {
+		t.Errorf("expected distinct season/year combinations to fetch separately, got %d calls", anilistGW.seasonAnimeForCalls)
+	}
+}
+
+// ホーム画面向けの現在シーズンとシーズンブラウジングはキャッシュが独立している。
+func TestUsecase_SeasonAnimeFor_DoesNotShareCacheWithCurrentSeason(t *testing.T) {
+	anilistGW := &fakeAniList{}
+	u := home.NewUsecase(anilistGW, &fakeJikan{})
+
+	current, err := u.CurrentSeasonAnime(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	browsed, err := u.SeasonAnimeFor(context.Background(), "WINTER", 2021)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if anilistGW.seasonAnimeCalls != 1 || anilistGW.seasonAnimeForCalls != 1 {
+		t.Errorf("expected one call to each gateway method, got %d and %d",
+			anilistGW.seasonAnimeCalls, anilistGW.seasonAnimeForCalls)
+	}
+	if current[0].Title == browsed[0].Title {
+		t.Errorf("expected the browsing cache to be independent of the home cache, both returned %q", current[0].Title)
 	}
 }
 

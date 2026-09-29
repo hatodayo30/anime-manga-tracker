@@ -16,9 +16,19 @@ import (
 
 const endpoint = "https://graphql.anilist.co"
 
-// minRequestInterval はAniListの公開レート制限（2023年以降 目安 30req/分）を守るための、
-// リクエスト間の最小間隔。Client経由の全呼び出しで共有する。
-const minRequestInterval = 2100 * time.Millisecond
+// AniListの公開レート制限（2023年以降 目安 30req/分）は「直近1分あたりの本数」という窓で
+// 数えられており、一定間隔での送信を強制されているわけではない。そのため固定間隔ではなく
+// トークンバケットで制御し、平均レートを制限内に抑えつつ、短時間に数本が重なるケース
+// （画面の初期表示や開発時の二重リクエスト）は待たせずに通す。
+//
+// 最悪ケースでも burstCapacity + 60s/tokenInterval = 5 + 24 = 29本/分 に収まり、
+// 目安の30req/分を超えない。
+const (
+	// tokenInterval はトークンが1個回復するまでの時間（= 定常状態でのリクエスト間隔）。
+	tokenInterval = 2500 * time.Millisecond
+	// burstCapacity はアイドル時に貯めておけるトークン数（= 待たずに連続送信できる本数）。
+	burstCapacity = 5
+)
 
 // maxRetries は429（Too Many Requests）応答時にリトライする最大回数。
 const maxRetries = 3
@@ -27,8 +37,10 @@ const maxRetries = 3
 type Client struct {
 	httpClient *http.Client
 
-	mu       sync.Mutex
-	lastCall time.Time
+	mu sync.Mutex
+	// allowAt はバケットを使い切る時刻。now からどれだけ手前にあるかが残トークン量を表す。
+	// 全呼び出しで共有し、送信枠を先に予約することで並行呼び出しどうしも間隔を守る。
+	allowAt time.Time
 }
 
 func NewClient() *Client {
@@ -37,11 +49,19 @@ func NewClient() *Client {
 	}
 }
 
-// throttle はリクエストを送る前に呼び出し、直前の呼び出しからminRequestInterval経つまで待つ。
+// throttle はリクエストを送る前に呼び出し、トークンバケットから1枠を消費する。
+// トークンが残っていれば即座に返り、尽きていれば次に回復するまで待つ。
 func (c *Client) throttle(ctx context.Context) error {
+	now := time.Now()
+
 	c.mu.Lock()
-	wait := max(minRequestInterval-time.Since(c.lastCall), 0)
-	c.lastCall = time.Now().Add(wait)
+	// allowAt が now から burstCapacity 個ぶん以上手前にある場合、貯まったトークンは
+	// 上限で頭打ちにする（長時間アイドルでも溜め込みすぎない）。
+	if earliest := now.Add(-burstCapacity * tokenInterval); c.allowAt.Before(earliest) {
+		c.allowAt = earliest
+	}
+	c.allowAt = c.allowAt.Add(tokenInterval)
+	wait := c.allowAt.Sub(now)
 	c.mu.Unlock()
 
 	if wait <= 0 {
@@ -55,6 +75,18 @@ func (c *Client) throttle(ctx context.Context) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// penalize は429を受けたときに、共有バケットの再開時刻を d だけ先送りする。リトライ中の
+// ゴルーチンだけでなく同時に走る他の呼び出しもまとめて待たせ、429の直後にさらにリクエストを
+// 重ねてしまうのを防ぐ。
+func (c *Client) penalize(d time.Duration) {
+	resumeAt := time.Now().Add(d)
+	c.mu.Lock()
+	if c.allowAt.Before(resumeAt) {
+		c.allowAt = resumeAt
+	}
+	c.mu.Unlock()
 }
 
 // sleep はctxのキャンセルを尊重しつつdだけ待つ。
@@ -113,6 +145,7 @@ func (c *Client) do(ctx context.Context, query string, variables map[string]any,
 
 		if status == http.StatusTooManyRequests {
 			wait = retryAfter(header, (2<<attempt)*time.Second)
+			c.penalize(wait)
 			continue
 		}
 
