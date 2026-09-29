@@ -4,7 +4,7 @@ import { PosterCard } from '../components/PosterCard'
 import { useWorkModal } from '../components/WorkModalContext'
 import { useKind } from '../hooks/useKind'
 import { api } from '../lib/api'
-import { STATUS_LABELS, translateGenre, unitFor, type Status } from '../lib/util'
+import { SORT_OPTIONS, STATUS_LABELS, translateGenre, unitFor, type SortKey, type Status } from '../lib/util'
 import type { LibraryRecord } from '../types'
 
 const STATUS_ORDER: Status[] = ['done', 'active', 'want']
@@ -12,6 +12,7 @@ const STATUS_ORDER: Status[] = ['done', 'active', 'want']
 export function LibraryPage() {
   const [kind, setKind] = useKind()
   const [status, setStatus] = useState<Status>('active')
+  const [sort, setSort] = useState<SortKey>('default')
   const [activeGenres, setActiveGenres] = useState<string[]>([])
   const [allRecords, setAllRecords] = useState<LibraryRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -27,7 +28,7 @@ export function LibraryPage() {
     let cancelled = false
     setLoading(true)
     api
-      .listRecords({ type: kind })
+      .listRecords({ type: kind, sort })
       .then((records) => {
         if (cancelled) return
         setAllRecords(records)
@@ -41,7 +42,7 @@ export function LibraryPage() {
     return () => {
       cancelled = true
     }
-  }, [kind, reloadSeq])
+  }, [kind, sort, reloadSeq])
 
   const reload = () => setReloadSeq((n) => n + 1)
   const labels = STATUS_LABELS[kind]
@@ -74,7 +75,7 @@ export function LibraryPage() {
     setActiveGenres((prev) => (prev.includes(g) ? prev.filter((x) => x !== g) : [...prev, g]))
   }
 
-  const unit = unitFor()
+  const unit = unitFor(kind)
 
   return (
     <>
@@ -112,13 +113,40 @@ export function LibraryPage() {
         </div>
       </div>
 
-      <div className="seg" style={{ width: 'fit-content' }}>
-        {STATUS_ORDER.map((key) => (
-          <label key={key} className={`seg-opt${status === key ? ' checked' : ''}`}>
-            <input type="radio" name="libstatus" checked={status === key} onChange={() => setStatus(key)} />
-            <span className="seg-label">{labels[key]}</span>
-          </label>
-        ))}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 'var(--space-3)',
+          flexWrap: 'wrap',
+          marginBottom: 'var(--space-4)',
+        }}
+      >
+        <div className="seg" style={{ width: 'fit-content' }}>
+          {STATUS_ORDER.map((key) => (
+            <label key={key} className={`seg-opt${status === key ? ' checked' : ''}`}>
+              <input type="radio" name="libstatus" checked={status === key} onChange={() => setStatus(key)} />
+              <span className="seg-label">{labels[key]}</span>
+            </label>
+          ))}
+        </div>
+
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+          <span className="text-muted">並び替え</span>
+          <select
+            className="input"
+            style={{ width: 'auto', padding: '6px 10px', fontSize: 12 }}
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {genreChips.length > 0 && (

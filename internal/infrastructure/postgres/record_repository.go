@@ -42,17 +42,33 @@ func scanRecord(row pgx.Row) (*domain.Record, error) {
 	return &r, nil
 }
 
-// List は種別・ステータスで記録を絞り込んで返す。どちらも空文字なら絞り込まない。
-func (r *RecordRepository) List(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status) ([]*domain.Record, error) {
+// orderByClauses は domain.SortKey ごとの ORDER BY 句。SQLに直接埋め込むため、
+// ここに定義済みのキー以外は絶対にクエリへ渡さない（List の先頭でフォールバックする）。
+// タイトル順は ICU の日本語コレーションを使う。読み仮名を持たないため漢字タイトルは
+// 厳密な五十音順にはならないが、コードポイント順よりは日本語として自然な並びになる。
+// 同値時は id で決着を付け、ページ再読み込みで順序が揺れないようにする。
+var orderByClauses = map[domain.SortKey]string{
+	domain.SortDefault: `CASE WHEN next_airing_at IS NULL THEN 1 ELSE 0 END, next_airing_at ASC, created_at DESC, id DESC`,
+	domain.SortTitle:   `title COLLATE "ja-x-icu" ASC, id ASC`,
+	domain.SortScore:   `rating DESC NULLS LAST, updated_at DESC, id DESC`,
+	domain.SortUpdated: `updated_at DESC, id DESC`,
+	domain.SortAdded:   `created_at DESC, id DESC`,
+}
+
+// List は種別・ステータスで記録を絞り込み、sort の順で返す。種別・ステータスはどちらも空文字なら絞り込まない。
+func (r *RecordRepository) List(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status, sort domain.SortKey) ([]*domain.Record, error) {
+	orderBy, ok := orderByClauses[sort]
+	if !ok {
+		orderBy = orderByClauses[domain.SortDefault]
+	}
+
 	query := fmt.Sprintf(`
 		SELECT %s FROM records
 		WHERE user_id = $1
 		  AND ($2 = '' OR media_type = $2)
 		  AND ($3 = '' OR status = $3)
-		ORDER BY
-		  CASE WHEN next_airing_at IS NULL THEN 1 ELSE 0 END, next_airing_at ASC,
-		  created_at DESC
-	`, recordColumns)
+		ORDER BY %s
+	`, recordColumns, orderBy)
 
 	rows, err := r.pool.Query(ctx, query, userID, string(mediaType), string(status))
 	if err != nil {
@@ -97,21 +113,22 @@ func (r *RecordRepository) Upsert(ctx context.Context, userID int64, in domain.N
 	return rec, nil
 }
 
-// Update は指定IDの記録のステータス/進捗/評価/メモを部分更新する。他ユーザーの記録は更新できない。
+// Update は指定IDの記録のステータス/進捗/総数/評価/メモを部分更新する。他ユーザーの記録は更新できない。
 // rating は 0 を渡すと NULL（未評価）に戻す特別扱い。
 func (r *RecordRepository) Update(ctx context.Context, userID, id int64, in domain.UpdateRecordInput) (*domain.Record, error) {
 	query := fmt.Sprintf(`
 		UPDATE records SET
 			status = COALESCE($3, status),
 			progress = COALESCE($4, progress),
-			rating = CASE WHEN $5::smallint IS NULL THEN rating WHEN $5::smallint = 0 THEN NULL ELSE $5::smallint END,
-			memo = COALESCE($6, memo),
+			total = COALESCE($5, total),
+			rating = CASE WHEN $6::smallint IS NULL THEN rating WHEN $6::smallint = 0 THEN NULL ELSE $6::smallint END,
+			memo = COALESCE($7, memo),
 			updated_at = now()
 		WHERE id = $1 AND user_id = $2
 		RETURNING %s
 	`, recordColumns)
 
-	row := r.pool.QueryRow(ctx, query, id, userID, in.Status, in.Progress, in.Rating, in.Memo)
+	row := r.pool.QueryRow(ctx, query, id, userID, in.Status, in.Progress, in.Total, in.Rating, in.Memo)
 	rec, err := scanRecord(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

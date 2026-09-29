@@ -34,8 +34,8 @@ function buildQuery(params: Record<string, string | undefined>): string {
 }
 
 export const api = {
-  listRecords: ({ type = '', status = '' }: { type?: string; status?: string } = {}) =>
-    request<LibraryRecord[]>('/records' + buildQuery({ type, status })),
+  listRecords: ({ type = '', status = '', sort = '' }: { type?: string; status?: string; sort?: string } = {}) =>
+    request<LibraryRecord[]>('/records' + buildQuery({ type, status, sort })),
   createRecord: (body: NewRecordInput) =>
     request<LibraryRecord>('/records', { method: 'POST', body: JSON.stringify(body) }),
   updateRecord: (id: number, body: UpdateRecordInput) =>

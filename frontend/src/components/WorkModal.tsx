@@ -8,8 +8,7 @@ import { Thumb } from './Thumb'
 import type { OpenWorkModalOptions, WorkModalItem } from './WorkModalContext'
 
 interface FreshInfo {
-  total: number | null
-  volumes?: number | null
+  total: number | null // アニメ=話数 / 漫画=巻数
   airingStatus?: string
   nextEpisode?: number | null
 }
@@ -70,6 +69,28 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
       cancelled = true
     }
   }, [])
+
+  // AniListの最新情報と保存済みの総数（アニメ=話数 / 漫画=巻数）がズレていたら同期する。
+  // 進捗バーと「全巻/全話読了でdoneへ」の判定がDBの値だけを見るライブラリ画面でも
+  // 正しく効くようにするため。漫画の記録単位を話数から巻数へ切り替えた既存レコードも
+  // モーダルを開いた時点でここで巻数に移行される。
+  useEffect(() => {
+    const fresh = freshInfo?.total
+    if (!currentRecord || fresh == null || fresh === currentRecord.total) return
+
+    let cancelled = false
+    api
+      .updateRecord(currentRecord.id, { total: fresh })
+      .then((next) => {
+        if (cancelled) return
+        setCurrentRecord(next)
+        onChange?.()
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [freshInfo, currentRecord])
 
   useEffect(() => {
     let cancelled = false
@@ -189,7 +210,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   }
 
   const labels = STATUS_LABELS[mediaType]
-  const unit = unitFor()
+  const unit = unitFor(mediaType)
   const total = freshInfo?.total ?? item.total ?? currentRecord?.total ?? null
   const status = currentRecord?.status ?? null
   const airingEp =
@@ -202,12 +223,8 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const metaParts = [mediaType === 'anime' ? 'アニメ' : '漫画', total ? `全${total}${unit}` : '連載中']
   if (scoreLabel) metaParts.push(`★${scoreLabel}`)
 
-  let supplementalInfo: string | null = null
-  if (airingEp != null) {
-    supplementalInfo = `現在${airingEp}${unit}放送中`
-  } else if (mediaType === 'manga' && freshInfo?.volumes) {
-    supplementalInfo = `既刊${freshInfo.volumes}巻`
-  }
+  // 漫画の既刊巻数は total（=AniListのvolumes）として metaParts に出るため、ここでは扱わない。
+  const supplementalInfo = airingEp != null ? `現在${airingEp}${unit}放送中` : null
 
   return (
     <div className="modal-overlay" onClick={onClose}>

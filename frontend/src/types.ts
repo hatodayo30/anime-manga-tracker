@@ -30,7 +30,7 @@ export interface AniListItem {
   title: string
   coverImageUrl: string
   genres: string[]
-  total: number | null
+  total: number | null // アニメ=話数 / 漫画=巻数（進捗の追跡単位）
   volumes?: number | null
   score?: number | null // 0-100
   synopsis?: string
@@ -71,6 +71,8 @@ export interface NewRecordInput {
 export interface UpdateRecordInput {
   status?: Status
   progress?: number
+  // AniListの最新情報で総数（アニメ=話数 / 漫画=巻数）がズレていたときの同期用。
+  total?: number
   // 1〜5で評価をセット、0で未評価に戻す。
   rating?: number
   memo?: string

@@ -17,15 +17,22 @@ func NewUsecase(repo Repository) *Usecase {
 	return &Usecase{repo: repo}
 }
 
-// List は種別・ステータスで記録を絞り込む。空文字は「絞り込みなし」を意味する。
-func (u *Usecase) List(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status) ([]*domain.Record, error) {
+// List は種別・ステータスで記録を絞り込み、sort の順で返す。種別・ステータスの空文字は「絞り込みなし」、
+// sort の空文字は domain.SortDefault を意味する。
+func (u *Usecase) List(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status, sort domain.SortKey) ([]*domain.Record, error) {
 	if mediaType != "" && !mediaType.Valid() {
 		return nil, fmt.Errorf("invalid media type: %s", mediaType)
 	}
 	if status != "" && !status.Valid() {
 		return nil, fmt.Errorf("invalid status: %s", status)
 	}
-	return u.repo.List(ctx, userID, mediaType, status)
+	if sort == "" {
+		sort = domain.SortDefault
+	}
+	if !sort.Valid() {
+		return nil, fmt.Errorf("invalid sort: %s", sort)
+	}
+	return u.repo.List(ctx, userID, mediaType, status, sort)
 }
 
 // AddOrUpdateStatus は作品をライブラリに追加する。既に登録済みならステータスのみ更新する
@@ -50,6 +57,9 @@ func (u *Usecase) UpdateProgressOrStatus(ctx context.Context, userID, id int64, 
 	}
 	if in.Progress != nil && *in.Progress < 0 {
 		return nil, fmt.Errorf("progress must be >= 0")
+	}
+	if in.Total != nil && *in.Total < 0 {
+		return nil, fmt.Errorf("total must be >= 0")
 	}
 	if in.Rating != nil && (*in.Rating < 0 || *in.Rating > 5) {
 		return nil, fmt.Errorf("rating must be between 0 and 5")

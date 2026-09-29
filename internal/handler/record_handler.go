@@ -21,13 +21,15 @@ func NewRecordHandler(u *record.Usecase) *RecordHandler {
 	return &RecordHandler{usecase: u}
 }
 
-// List handles GET /api/records?type=anime&status=active
+// List handles GET /api/records?type=anime&status=active&sort=title
+// sort は default|title|score|updated|added。省略時は default。
 func (h *RecordHandler) List(c echo.Context) error {
 	userID := middleware.UserFromContext(c).ID
 	mediaType := domain.MediaType(c.QueryParam("type"))
 	status := domain.Status(c.QueryParam("status"))
+	sort := domain.SortKey(c.QueryParam("sort"))
 
-	records, err := h.usecase.List(c.Request().Context(), userID, mediaType, status)
+	records, err := h.usecase.List(c.Request().Context(), userID, mediaType, status, sort)
 	if err != nil {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
