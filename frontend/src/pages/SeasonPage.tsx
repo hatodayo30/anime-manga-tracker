@@ -22,6 +22,10 @@ function currentSeasonClient(now = new Date()): { season: string; year: number }
 
 const YEAR_MIN = 2020
 
+// PAGE_SIZE は1ページに並べる件数。サーバーはシーズンあたり40件（AniListの1リクエスト上限50の内側）を
+// まとめて返すため、ページ送りは取得済みの配列を切り出すだけで済み、追加のAPI呼び出しは発生しない。
+const PAGE_SIZE = 20
+
 export function SeasonPage() {
   const { user } = useAuth()
   const openWorkModal = useWorkModal()
@@ -31,6 +35,7 @@ export function SeasonPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [reloadSeq, setReloadSeq] = useState(0)
+  const [page, setPage] = useState(1)
 
   // シーズン一覧はseason/yearだけに依存する。ログイン状態やライブラリの更新では取り直さない
   // （AniListへの問い合わせはレート制限付きで高コストなため、不要な再取得を避ける）。
@@ -38,6 +43,7 @@ export function SeasonPage() {
     let cancelled = false
     setLoading(true)
     setError(null)
+    setPage(1) // シーズンを切り替えたら1ページ目から見せる
 
     api
       .seasonAnime({ season, year })
@@ -82,6 +88,15 @@ export function SeasonPage() {
 
   const reload = () => setReloadSeq((n) => n + 1)
   const libraryByAniListId = new Map(library.map((r) => [r.anilistId, r]))
+  const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE))
+  const pageItems = results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  // ページを送ったら一覧の先頭が見えるように戻す（下端のボタンを押した位置のままだと
+  // 切り替わった一覧の途中から始まってしまうため）。
+  const goToPage = (next: number) => {
+    setPage(next)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
   const currentYear = new Date().getFullYear()
   const years: number[] = []
   for (let y = currentYear; y >= YEAR_MIN; y--) years.push(y)
@@ -130,7 +145,7 @@ export function SeasonPage() {
         <p className="text-muted">該当するアニメが見つかりませんでした。</p>
       ) : (
         <div className="poster-grid">
-          {results.map((item) => {
+          {pageItems.map((item) => {
             const record = libraryByAniListId.get(item.anilistId) || null
             const score = formatScore(item.score)
             return (
@@ -144,6 +159,23 @@ export function SeasonPage() {
             )
           })}
         </div>
+      )}
+
+      {!loading && !error && totalPages > 1 && (
+        <nav
+          aria-label="ページ送り"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 'var(--space-4)', marginTop: 'var(--space-6)' }}
+        >
+          <button type="button" className="btn btn-secondary" disabled={page === 1} onClick={() => goToPage(page - 1)}>
+            ‹ 前へ
+          </button>
+          <span className="text-muted" style={{ fontSize: 13 }} aria-live="polite">
+            {page} / {totalPages}
+          </span>
+          <button type="button" className="btn btn-secondary" disabled={page === totalPages} onClick={() => goToPage(page + 1)}>
+            次へ ›
+          </button>
+        </nav>
       )}
     </>
   )
