@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
@@ -27,14 +28,14 @@ var _ record.Repository = (*RecordRepository)(nil)
 
 const recordColumns = `
 	id, anilist_id, media_type, title, cover_image_url, genres,
-	status, progress, total, next_airing_at, rating, memo, created_at, updated_at
+	status, progress, total, progress_unit, next_airing_at, rating, memo, created_at, updated_at
 `
 
 func scanRecord(row pgx.Row) (*domain.Record, error) {
 	var r domain.Record
 	err := row.Scan(
 		&r.ID, &r.AniListID, &r.MediaType, &r.Title, &r.CoverImageURL, &r.Genres,
-		&r.Status, &r.Progress, &r.Total, &r.NextAiringAt, &r.Rating, &r.Memo, &r.CreatedAt, &r.UpdatedAt,
+		&r.Status, &r.Progress, &r.Total, &r.ProgressUnit, &r.NextAiringAt, &r.Rating, &r.Memo, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -89,9 +90,11 @@ func (r *RecordRepository) List(ctx context.Context, userID int64, mediaType dom
 
 // Upsert は AniList ID + 種別が一致する記録があれば更新、なければ新規作成する。
 func (r *RecordRepository) Upsert(ctx context.Context, userID int64, in domain.NewRecordInput) (*domain.Record, error) {
+	// progress_unit は ON CONFLICT で更新しない。一度ユーザーが話数/巻数を選んだ作品を、
+	// 検索画面からステータスを押し直しただけで既定値に戻してしまわないため。
 	query := fmt.Sprintf(`
-		INSERT INTO records (user_id, anilist_id, media_type, title, cover_image_url, genres, status, progress, total, next_airing_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9)
+		INSERT INTO records (user_id, anilist_id, media_type, title, cover_image_url, genres, status, progress, total, progress_unit, next_airing_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10)
 		ON CONFLICT (user_id, anilist_id, media_type)
 		DO UPDATE SET status = EXCLUDED.status, next_airing_at = EXCLUDED.next_airing_at, updated_at = now()
 		RETURNING %s
@@ -104,7 +107,7 @@ func (r *RecordRepository) Upsert(ctx context.Context, userID int64, in domain.N
 	}
 
 	row := r.pool.QueryRow(ctx, query,
-		userID, in.AniListID, in.MediaType, in.Title, in.CoverImageURL, in.Genres, in.Status, in.Total, nextAiringAt,
+		userID, in.AniListID, in.MediaType, in.Title, in.CoverImageURL, in.Genres, in.Status, in.Total, in.ProgressUnit, nextAiringAt,
 	)
 	rec, err := scanRecord(row)
 	if err != nil {
@@ -113,26 +116,33 @@ func (r *RecordRepository) Upsert(ctx context.Context, userID int64, in domain.N
 	return rec, nil
 }
 
-// Update は指定IDの記録のステータス/進捗/総数/評価/メモを部分更新する。他ユーザーの記録は更新できない。
-// rating は 0 を渡すと NULL（未評価）に戻す特別扱い。
+// Update は指定IDの記録のステータス/進捗/総数/単位/評価/メモを部分更新する。他ユーザーの記録は更新できない。
+// rating と total は 0 を渡すと NULL（未評価 / 総数不明）に戻す特別扱い。
 func (r *RecordRepository) Update(ctx context.Context, userID, id int64, in domain.UpdateRecordInput) (*domain.Record, error) {
 	query := fmt.Sprintf(`
 		UPDATE records SET
 			status = COALESCE($3, status),
 			progress = COALESCE($4, progress),
-			total = COALESCE($5, total),
-			rating = CASE WHEN $6::smallint IS NULL THEN rating WHEN $6::smallint = 0 THEN NULL ELSE $6::smallint END,
-			memo = COALESCE($7, memo),
+			total = CASE WHEN $5::integer IS NULL THEN total WHEN $5::integer = 0 THEN NULL ELSE $5::integer END,
+			progress_unit = COALESCE($6, progress_unit),
+			rating = CASE WHEN $7::smallint IS NULL THEN rating WHEN $7::smallint = 0 THEN NULL ELSE $7::smallint END,
+			memo = COALESCE($8, memo),
 			updated_at = now()
 		WHERE id = $1 AND user_id = $2
 		RETURNING %s
 	`, recordColumns)
 
-	row := r.pool.QueryRow(ctx, query, id, userID, in.Status, in.Progress, in.Total, in.Rating, in.Memo)
+	row := r.pool.QueryRow(ctx, query, id, userID, in.Status, in.Progress, in.Total, in.ProgressUnit, in.Rating, in.Memo)
 	rec, err := scanRecord(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, record.ErrNotFound
+		}
+		// アニメに巻数、漫画に話数(episode)のような噛み合わない単位を送ると
+		// CHECK制約に弾かれる。呼び出し側がリクエスト不正として扱えるようにする。
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.ConstraintName == "records_progress_unit_matches_media_type" {
+			return nil, record.ErrInvalidProgressUnit
 		}
 		return nil, fmt.Errorf("update record: %w", err)
 	}

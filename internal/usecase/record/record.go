@@ -47,6 +47,12 @@ func (u *Usecase) AddOrUpdateStatus(ctx context.Context, userID int64, in domain
 	if in.Title == "" {
 		return nil, fmt.Errorf("title is required")
 	}
+	if in.ProgressUnit == "" {
+		in.ProgressUnit = domain.DefaultProgressUnit(in.MediaType)
+	}
+	if !in.ProgressUnit.ValidFor(in.MediaType) {
+		return nil, fmt.Errorf("progress unit %s is not valid for %s", in.ProgressUnit, in.MediaType)
+	}
 	return u.repo.Upsert(ctx, userID, in)
 }
 
@@ -63,6 +69,11 @@ func (u *Usecase) UpdateProgressOrStatus(ctx context.Context, userID, id int64, 
 	}
 	if in.Rating != nil && (*in.Rating < 0 || *in.Rating > 5) {
 		return nil, fmt.Errorf("rating must be between 0 and 5")
+	}
+	// 種別との噛み合わせ（アニメに巻数など）はレコードを読まないと判定できないため、
+	// ここでは値そのものの妥当性だけを見てリポジトリ側のCHECK制約に委ねる。
+	if in.ProgressUnit != nil && !in.ProgressUnit.Valid() {
+		return nil, fmt.Errorf("invalid progress unit: %s", *in.ProgressUnit)
 	}
 	return u.repo.Update(ctx, userID, id, in)
 }

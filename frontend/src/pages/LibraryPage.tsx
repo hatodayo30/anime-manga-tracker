@@ -4,7 +4,7 @@ import { PosterCard } from '../components/PosterCard'
 import { useWorkModal } from '../components/WorkModalContext'
 import { useKind } from '../hooks/useKind'
 import { api } from '../lib/api'
-import { SORT_OPTIONS, STATUS_LABELS, translateGenre, unitFor, type SortKey, type Status } from '../lib/util'
+import { SORT_OPTIONS, STATUS_LABELS, translateGenre, unitLabel, type SortKey, type Status } from '../lib/util'
 import type { LibraryRecord } from '../types'
 
 const STATUS_ORDER: Status[] = ['done', 'active', 'want']
@@ -74,8 +74,6 @@ export function LibraryPage() {
   const toggleGenre = (g: string) => {
     setActiveGenres((prev) => (prev.includes(g) ? prev.filter((x) => x !== g) : [...prev, g]))
   }
-
-  const unit = unitFor(kind)
 
   return (
     <>
@@ -179,6 +177,7 @@ export function LibraryPage() {
         <div className="poster-grid">
           {results.map((r) => {
             const pct = r.status === 'active' && r.total ? Math.min(100, Math.round((r.progress / r.total) * 100)) : null
+            const unit = unitLabel(r.progressUnit)
             const caption =
               r.status === 'active'
                 ? r.total

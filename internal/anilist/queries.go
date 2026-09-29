@@ -19,8 +19,8 @@ type SearchResult struct {
 	Title         string   `json:"title"` // 日本作品: native（漢字/かな）優先。それ以外（KR/CN等）は english 優先。
 	CoverImageURL string   `json:"coverImageUrl"`
 	Genres        []string `json:"genres"`
-	Total         *int     `json:"total"`                  // アニメ: 話数（episodes）/ 漫画: 巻数（volumes）。進捗の追跡単位。
-	Volumes       *int     `json:"volumes,omitempty"`      // 漫画の既刊巻数（AniList volumes）。Total と同じ値だが、漫画であることが自明な文脈での表示に使う。
+	Total         *int     `json:"total"`                  // アニメ: 話数（episodes）/ 漫画: 話数（chapters）。
+	Volumes       *int     `json:"volumes,omitempty"`      // 漫画の既刊巻数（AniList volumes）。巻数単位で記録している作品の総数に使う。
 	Score         *int     `json:"score,omitempty"`        // AniListのaverageScore（0-100）
 	Synopsis      string   `json:"synopsis,omitempty"`     // あらすじ（HTMLタグ除去済み）
 	NextAiringAt  *int64   `json:"nextAiringAt,omitempty"` // unix seconds
@@ -256,11 +256,11 @@ func toSearchResults(mediaType domain.MediaType, list []media) []SearchResult {
 		} else {
 			title = firstNonEmpty(m.Title.English, m.Title.Romaji, m.Title.Native)
 		}
-		// 進捗の追跡単位はアニメが話数、漫画が巻数。漫画の chapters は AniList 上の
-		// 話数だが、読了記録は巻単位で付けるため total には volumes を入れる。
+		// 漫画は話数（chapters）と巻数（volumes）の両方を返し、どちらで進捗を数えるかは
+		// レコードごとの domain.ProgressUnit が決める。Total は既定の話数側。
 		total := m.Episodes
 		if mediaType == domain.MediaTypeManga {
-			total = m.Volumes
+			total = m.Chapters
 		}
 
 		result := SearchResult{

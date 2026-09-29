@@ -15,7 +15,7 @@ import {
   formatScore,
   formatWeekday,
   jstAiringInfo,
-  unitFor,
+  unitLabel,
   type MediaKind,
 } from '../lib/util'
 import type { AniListItem, LibraryRecord, MangaRankingItem } from '../types'
@@ -162,7 +162,6 @@ function ContinueShelf({
   library: LibraryRecord[]
   onOpen: (r: LibraryRecord) => void
 }) {
-  const unit = unitFor(kind)
   const title = kind === 'anime' ? 'つづきを見る' : 'つづきを読む'
 
   return (
@@ -191,6 +190,7 @@ function ContinueShelf({
             <div className="poster-row">
               {active.map((r) => {
                 const pct = r.total ? Math.min(100, Math.round((r.progress / r.total) * 100)) : 0
+                const unit = unitLabel(r.progressUnit)
                 const caption = r.total ? `${r.progress} / ${r.total}${unit}` : `${r.progress}${unit}まで`
                 return <PosterCard key={r.id} item={r} pct={pct} caption={caption} onClick={() => onOpen(r)} />
               })}
