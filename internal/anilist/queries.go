@@ -104,9 +104,13 @@ type pageResponse struct {
 	} `json:"Page"`
 }
 
+// seasonQuery はシーズン画面（20件×2ページ = 40件）とホームの今季アニメ関連の棚の両方で使う。
+// perPage を40にしているのは、シーズン画面の2ページぶんをこの1リクエストで賄い、
+// 同時にホームの「今週放送の人気アニメ TOP10」が放送予定で絞り込んでも10件を確保できる
+// 母集団を作るため。AniList の Page.perPage 上限は50なので、40は1リクエストに収まる。
 const seasonQuery = `
 query ($season: MediaSeason, $year: Int) {
-  Page(page: 1, perPage: 12) {
+  Page(page: 1, perPage: 40) {
     media(season: $season, seasonYear: $year, type: ANIME, sort: POPULARITY_DESC, isAdult: false) {` + mediaFields + `
     }
   }

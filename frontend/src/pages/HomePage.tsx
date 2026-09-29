@@ -94,32 +94,12 @@ export function HomePage() {
       )}
 
       {kind === 'anime' && (
-        <div className="shelf">
-          <div className="shelf-head">
-            <h5 className="shelf-h">今季放送中アニメ</h5>
-            <Link to="/search" className="shelf-more">
-              すべて ›
-            </Link>
-          </div>
-          {seasonError ? (
-            <p className="text-muted">AniListからの取得に失敗しました: {seasonError}</p>
-          ) : (
-            <div className="poster-row">
-              {season.map((item) => {
-                const r = libraryByAniListId.get(item.anilistId)
-                return (
-                  <PosterCard
-                    key={item.anilistId}
-                    item={item}
-                    badgeLabel={r ? `${STATUS_LABELS.anime[r.status]} ✓` : null}
-                    caption={formatWeekday(item.nextAiringAt) || '放送日未定'}
-                    onClick={() => openWorkModal({ item, mediaType: 'anime', record: r || null, onChange: reload })}
-                  />
-                )
-              })}
-            </div>
-          )}
-        </div>
+        <AiringRankingShelf
+          season={season}
+          error={seasonError}
+          library={libraryByAniListId}
+          onOpen={(item) => openWorkModal({ item, mediaType: 'anime', record: libraryByAniListId.get(item.anilistId) || null, onChange: reload })}
+        />
       )}
 
       {kind === 'manga' && (
@@ -202,6 +182,67 @@ function ContinueShelf({
   )
 }
 
+// airingThisWeek は今週放送される作品だけを残す。nextAiringAt は「次の1話」の放送時刻なので、
+// 7日以内に入っていれば今週放送される作品といえる。隔週放送や休止中で次回が1週間以上先の作品を
+// 「今週の放送予定」の曜日カードに並べないために、曜日別スケジュールとTOP10の両方でこれを使う。
+// season は AniList から人気順（POPULARITY_DESC）で返ってくるため、絞り込んだ並びは人気順のまま。
+const AIRING_WEEK_SECONDS = 7 * 24 * 60 * 60
+const AIRING_TOP_N = 10
+
+function airingThisWeek(season: AniListItem[]): AniListItem[] {
+  const nowSeconds = Date.now() / 1000
+  return season.filter((a) => a.nextAiringAt != null && a.nextAiringAt - nowSeconds <= AIRING_WEEK_SECONDS)
+}
+
+function AiringRankingShelf({
+  season,
+  error,
+  library,
+  onOpen,
+}: {
+  season: AniListItem[]
+  error: string | null
+  library: Map<number, LibraryRecord>
+  onOpen: (item: AniListItem) => void
+}) {
+  // 該当が10件に満たないシーズン（開幕直後など）は、揃った件数だけを並べる。
+  const top = airingThisWeek(season).slice(0, AIRING_TOP_N)
+
+  return (
+    <div className="shelf">
+      <div className="shelf-head">
+        <h5 className="shelf-h">今週放送の人気アニメ TOP10</h5>
+        <Link to="/season" className="shelf-more">
+          すべて ›
+        </Link>
+      </div>
+      {error ? (
+        <p className="text-muted">AniListからの取得に失敗しました: {error}</p>
+      ) : top.length === 0 ? (
+        <p className="text-muted" style={{ fontSize: 13 }}>
+          今週放送予定のアニメが見つかりませんでした。
+        </p>
+      ) : (
+        <div className="poster-row">
+          {top.map((item, i) => {
+            const r = library.get(item.anilistId)
+            return (
+              <PosterCard
+                key={item.anilistId}
+                item={item}
+                ranked={i + 1}
+                badgeLabel={r ? `${STATUS_LABELS.anime[r.status]} ✓` : null}
+                caption={formatWeekday(item.nextAiringAt) || '放送日未定'}
+                onClick={() => onOpen(item)}
+              />
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ScheduleShelf({
   season,
   library,
@@ -211,7 +252,7 @@ function ScheduleShelf({
   library: Map<number, LibraryRecord>
   onOpen: (item: AniListItem) => void
 }) {
-  const withSchedule = season.filter((a) => a.nextAiringAt)
+  const withSchedule = airingThisWeek(season)
 
   return (
     <div className="shelf">
