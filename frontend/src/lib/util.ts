@@ -122,10 +122,21 @@ export function formatScore(score: number | null | undefined): string | null {
   return (score / 10).toFixed(1)
 }
 
-// 進捗の追跡単位。漫画もAniListのchaptersを使うため、アニメの話数と同じ「話」で統一する。
-export function unitFor(): string {
-  return '話'
+// 進捗の追跡単位。アニメは話数、漫画は巻数で記録する。
+export function unitFor(kind: MediaKind): string {
+  return kind === 'anime' ? '話' : '巻'
 }
+
+export type SortKey = 'default' | 'title' | 'score' | 'updated' | 'added'
+
+// ライブラリの並び替えセレクトの選択肢（GET /api/records の sort パラメータと同じ値）。
+export const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: 'default', label: 'おすすめ順' },
+  { value: 'title', label: 'タイトル順' },
+  { value: 'score', label: '評価が高い順' },
+  { value: 'updated', label: '更新が新しい順' },
+  { value: 'added', label: '追加が新しい順' },
+]
 
 const HIRAGANA_DIGRAPHS: Record<string, string> = {
   きゃ: 'kya', きゅ: 'kyu', きょ: 'kyo',

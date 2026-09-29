@@ -203,11 +203,12 @@ func toSearchResult(kind string, entry searchEntry, rank int) anilist.SearchResu
 		score = &s
 	}
 
+	// 進捗の追跡単位は anilist.SearchResult に合わせる（アニメ=話数、漫画=巻数）。
 	var total *int
 	if kind == "anime" {
 		total = entry.Episodes
 	} else {
-		total = entry.Chapters
+		total = entry.Volumes
 	}
 
 	synopsis := ""

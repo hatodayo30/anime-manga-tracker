@@ -162,7 +162,7 @@ function ContinueShelf({
   library: LibraryRecord[]
   onOpen: (r: LibraryRecord) => void
 }) {
-  const unit = unitFor()
+  const unit = unitFor(kind)
   const title = kind === 'anime' ? 'つづきを見る' : 'つづきを読む'
 
   return (

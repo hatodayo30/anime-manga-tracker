@@ -11,7 +11,7 @@ import (
 
 // fakeRepository は record.Repository のテスト用実装。呼び出された引数と、返す戻り値を記録する。
 type fakeRepository struct {
-	listFunc   func(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status) ([]*domain.Record, error)
+	listFunc   func(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status, sort domain.SortKey) ([]*domain.Record, error)
 	upsertFunc func(ctx context.Context, userID int64, in domain.NewRecordInput) (*domain.Record, error)
 	updateFunc func(ctx context.Context, userID, id int64, in domain.UpdateRecordInput) (*domain.Record, error)
 	deleteFunc func(ctx context.Context, userID, id int64) error
@@ -19,9 +19,9 @@ type fakeRepository struct {
 	called bool
 }
 
-func (f *fakeRepository) List(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status) ([]*domain.Record, error) {
+func (f *fakeRepository) List(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status, sort domain.SortKey) ([]*domain.Record, error) {
 	f.called = true
-	return f.listFunc(ctx, userID, mediaType, status)
+	return f.listFunc(ctx, userID, mediaType, status, sort)
 }
 
 func (f *fakeRepository) Upsert(ctx context.Context, userID int64, in domain.NewRecordInput) (*domain.Record, error) {
@@ -43,7 +43,7 @@ func TestUsecase_List_InvalidMediaType(t *testing.T) {
 	repo := &fakeRepository{}
 	u := record.NewUsecase(repo)
 
-	_, err := u.List(context.Background(), 1, "movie", "")
+	_, err := u.List(context.Background(), 1, "movie", "", "")
 	if err == nil {
 		t.Fatal("expected error for invalid media type, got nil")
 	}
@@ -56,7 +56,7 @@ func TestUsecase_List_InvalidStatus(t *testing.T) {
 	repo := &fakeRepository{}
 	u := record.NewUsecase(repo)
 
-	_, err := u.List(context.Background(), 1, "", "paused")
+	_, err := u.List(context.Background(), 1, "", "paused", "")
 	if err == nil {
 		t.Fatal("expected error for invalid status, got nil")
 	}
@@ -68,21 +68,51 @@ func TestUsecase_List_InvalidStatus(t *testing.T) {
 func TestUsecase_List_DelegatesToRepository(t *testing.T) {
 	want := []*domain.Record{{ID: 1, Title: "Frieren"}}
 	repo := &fakeRepository{
-		listFunc: func(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status) ([]*domain.Record, error) {
-			if userID != 42 || mediaType != domain.MediaTypeAnime || status != domain.StatusActive {
-				t.Errorf("unexpected args: userID=%d mediaType=%s status=%s", userID, mediaType, status)
+		listFunc: func(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status, sort domain.SortKey) ([]*domain.Record, error) {
+			if userID != 42 || mediaType != domain.MediaTypeAnime || status != domain.StatusActive || sort != domain.SortTitle {
+				t.Errorf("unexpected args: userID=%d mediaType=%s status=%s sort=%s", userID, mediaType, status, sort)
 			}
 			return want, nil
 		},
 	}
 	u := record.NewUsecase(repo)
 
-	got, err := u.List(context.Background(), 42, domain.MediaTypeAnime, domain.StatusActive)
+	got, err := u.List(context.Background(), 42, domain.MediaTypeAnime, domain.StatusActive, domain.SortTitle)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(got) != 1 || got[0] != want[0] {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestUsecase_List_InvalidSort(t *testing.T) {
+	repo := &fakeRepository{}
+	u := record.NewUsecase(repo)
+
+	_, err := u.List(context.Background(), 1, "", "", "popularity")
+	if err == nil {
+		t.Fatal("expected error for invalid sort, got nil")
+	}
+	if repo.called {
+		t.Error("repository should not be called when validation fails")
+	}
+}
+
+// sort未指定（空文字）は既定の並び順に解決してからリポジトリへ渡す。
+func TestUsecase_List_EmptySortFallsBackToDefault(t *testing.T) {
+	repo := &fakeRepository{
+		listFunc: func(ctx context.Context, userID int64, mediaType domain.MediaType, status domain.Status, sort domain.SortKey) ([]*domain.Record, error) {
+			if sort != domain.SortDefault {
+				t.Errorf("sort = %s, want %s", sort, domain.SortDefault)
+			}
+			return nil, nil
+		},
+	}
+	u := record.NewUsecase(repo)
+
+	if _, err := u.List(context.Background(), 1, "", "", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -144,6 +174,7 @@ func TestUsecase_UpdateProgressOrStatus_Validation(t *testing.T) {
 	negativeProgress := -1
 	tooHighRating := 6
 	negativeRating := -1
+	negativeTotal := -1
 
 	tests := []struct {
 		name string
@@ -153,6 +184,7 @@ func TestUsecase_UpdateProgressOrStatus_Validation(t *testing.T) {
 		{"negative progress", domain.UpdateRecordInput{Progress: &negativeProgress}},
 		{"rating too high", domain.UpdateRecordInput{Rating: &tooHighRating}},
 		{"negative rating", domain.UpdateRecordInput{Rating: &negativeRating}},
+		{"negative total", domain.UpdateRecordInput{Total: &negativeTotal}},
 	}
 
 	for _, tt := range tests {
