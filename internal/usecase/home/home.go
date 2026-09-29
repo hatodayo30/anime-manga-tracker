@@ -3,6 +3,7 @@ package home
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -14,6 +15,16 @@ import (
 // cacheTTL は外部API呼び出し結果をホーム画面向けにキャッシュしておく時間。
 // タブ切り替えのたびに毎回AniList/Jikanへ問い合わせるのを防ぐ。
 const cacheTTL = 10 * time.Minute
+
+// seasonBrowseCacheTTL はシーズンブラウジング画面（任意のseason/year指定）向けキャッシュの保持時間。
+// 過去シーズンのラインナップは変わらず、放送中シーズンでも変動するのはスコア程度なので、
+// ホーム画面向けのcacheTTLより長めに取って画面の行き来を軽くする。
+const seasonBrowseCacheTTL = 30 * time.Minute
+
+// seasonBrowseCacheMaxEntries はシーズンブラウジング用キャッシュが保持するseason/yearの数。
+// 1年4シーズンなので十数年ぶんの行き来をカバーできる。yearはクエリパラメータ由来で
+// 際限なく増えうるため、上限を設けてメモリ使用量を一定に保つ。
+const seasonBrowseCacheMaxEntries = 64
 
 // jikanEnrichTimeout は1件あたりのJikan呼び出しに許すタイムアウト。
 // Jikanはレート制限（3req/秒程度）があるパブリックAPIのため、1件失敗しても全体は継続する。
@@ -34,6 +45,7 @@ type Usecase struct {
 	jikan   JikanGateway
 
 	seasonAnimeCache   *cache.TTLCache[[]anilist.SearchResult]
+	seasonBrowseCache  *cache.TTLCache[[]anilist.SearchResult]
 	trendingCache      *cache.TTLCache[[]anilist.SearchResult]
 	trendingMangaCache *cache.TTLCache[[]MangaRankingItem]
 }
@@ -43,6 +55,7 @@ func NewUsecase(anilistGateway AniListGateway, jikanGateway JikanGateway) *Useca
 		anilist:            anilistGateway,
 		jikan:              jikanGateway,
 		seasonAnimeCache:   cache.New[[]anilist.SearchResult](cacheTTL),
+		seasonBrowseCache:  cache.NewBounded[[]anilist.SearchResult](seasonBrowseCacheTTL, seasonBrowseCacheMaxEntries),
 		trendingCache:      cache.New[[]anilist.SearchResult](cacheTTL),
 		trendingMangaCache: cache.New[[]MangaRankingItem](cacheTTL),
 	}
@@ -55,9 +68,13 @@ func (u *Usecase) CurrentSeasonAnime(ctx context.Context) ([]anilist.SearchResul
 	})
 }
 
-// SeasonAnimeFor はシーズンブラウジングページ向けに、任意のシーズンのアニメ一覧を返す。
+// SeasonAnimeFor はシーズンブラウジングページ向けに、任意のシーズンのアニメ一覧を返す
+// （season+yearごとにキャッシュあり）。
 func (u *Usecase) SeasonAnimeFor(ctx context.Context, season string, year int) ([]anilist.SearchResult, error) {
-	return u.anilist.SeasonAnimeFor(ctx, season, year)
+	key := season + ":" + strconv.Itoa(year)
+	return u.seasonBrowseCache.Get(key, func() ([]anilist.SearchResult, error) {
+		return u.anilist.SeasonAnimeFor(ctx, season, year)
+	})
 }
 
 // TrendingAnime は人気アニメ一覧を返す（キャッシュあり）。
