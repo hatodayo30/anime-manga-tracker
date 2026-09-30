@@ -70,6 +70,10 @@ prompt6.md でトークンバケット化したとはいえ平均レートの上
 
 ## 着手順
 
+> **注**: この節は 2026-09-30 時点のもので、prompt5.md / prompt6.md の完了により古くなっている。
+> 最新の残タスクと着手順は `BACKLOG.md` を参照すること。以下は当時の記録として残す。
+
+
 1. **prompt6.md: シーズン画面のパフォーマンス改善** → **対応済み**
    `SeasonAnimeFor` の season+year 別キャッシュ、キャッシュの single-flight 化、
    AniList スロットルのトークンバケット化、`SeasonPage` の effect 分割。
