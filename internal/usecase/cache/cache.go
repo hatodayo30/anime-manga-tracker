@@ -98,7 +98,7 @@ func (c *TTLCache[T]) Get(ctx context.Context, key string, fetch func(context.Co
 			if age >= c.ttl && !e.refreshing {
 				// TTL切れ。古い値を返しつつ、裏で取り直す
 				e.refreshing = true
-				go c.refresh(ctx, key, e, fetch)
+				go c.refreshInBackground(ctx, key, e, fetch)
 			}
 			data := e.data
 			c.mu.Unlock()
@@ -131,14 +131,55 @@ func (c *TTLCache[T]) Get(ctx context.Context, key string, fetch func(context.Co
 	return e.data, e.err
 }
 
-// refresh はstaleなエントリをバックグラウンドで取り直し、成功したら新しいエントリに差し替える。
-// 失敗した場合は古い値をそのまま残す（staleTTLを超えるまでは古い値を返し続け、次の取得で再試行する）。
-func (c *TTLCache[T]) refresh(ctx context.Context, key string, stale *entry[T], fetch func(context.Context) (T, error)) {
+// Refresh はTTLの残り時間に関わらず値を取り直す。起動時のウォームアップと定期リフレッシュ
+// （internal/scheduler から呼ばれる）のための入口で、利用者がTTL切れや空のキャッシュを踏む前に
+// 中身を入れ替えるのが目的。
+//
+// 既に値を持つキーでは、取り直しが終わるまで従来の値が返り続ける（Get を待たせない）。
+// 取得や取り直しが既に進行中のキーでは何もしない。レート制限付きの上流に重複リクエストを
+// 作らないため、取り直しは1キーにつき常に1本に保つ。
+func (c *TTLCache[T]) Refresh(ctx context.Context, key string, fetch func(context.Context) (T, error)) error {
+	c.mu.Lock()
+	e, ok := c.items[key]
+	switch {
+	case !ok:
+		// 値がまだ無い（起動直後のウォームアップ）。通常の取得と同じ経路で詰める
+		c.mu.Unlock()
+		_, err := c.Get(ctx, key, fetch)
+		return err
+
+	case !e.done() || e.refreshing:
+		// 既に取得・取り直しが走っている。重ねて上流を叩かない
+		c.mu.Unlock()
+		return nil
+
+	case time.Since(e.fetchedAt) >= c.staleTTL:
+		// もう返してよい古さではない。通常の取得と同じ扱いにする
+		c.mu.Unlock()
+		_, err := c.Get(ctx, key, fetch)
+		return err
+
+	default:
+		e.refreshing = true
+		c.mu.Unlock()
+		return c.doRefresh(ctx, key, e, fetch)
+	}
+}
+
+// refreshInBackground は Get がTTL切れを見つけたときの取り直しをgoroutineで行う。
+func (c *TTLCache[T]) refreshInBackground(ctx context.Context, key string, stale *entry[T], fetch func(context.Context) (T, error)) {
 	// 呼び出し元のリクエストは既に終わっている可能性が高いのでキャンセルを引き継がない。
 	// 代わりに上限時間を設けて、上流が応答しないときにgoroutineが残り続けるのを防ぐ。
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
 	defer cancel()
 
+	_ = c.doRefresh(ctx, key, stale, fetch)
+}
+
+// doRefresh はstaleなエントリを取り直し、成功したら新しいエントリに差し替える。
+// 失敗した場合は古い値をそのまま残す（staleTTLを超えるまでは古い値を返し続け、次の取得で再試行する）。
+// 呼び出し元は stale.refreshing を true にしてから呼ぶこと。
+func (c *TTLCache[T]) doRefresh(ctx context.Context, key string, stale *entry[T], fetch func(context.Context) (T, error)) error {
 	data, err := fetch(ctx)
 	fetchedAt := time.Now()
 
@@ -146,16 +187,17 @@ func (c *TTLCache[T]) refresh(ctx context.Context, key string, stale *entry[T], 
 	defer c.mu.Unlock()
 	if c.items[key] != stale {
 		// 待たせる側のfetchが先に結果を入れた、または追い出された。古い結果で上書きしない
-		return
+		return err
 	}
 	stale.refreshing = false
 	if err != nil {
-		return
+		return err
 	}
 
 	fresh := &entry[T]{ready: closedChan(), data: data, fetchedAt: fetchedAt}
 	c.putLocked(key, fresh)
 	c.evictLocked(key)
+	return nil
 }
 
 func closedChan() chan struct{} {
