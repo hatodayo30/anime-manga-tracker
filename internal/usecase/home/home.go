@@ -63,7 +63,7 @@ func NewUsecase(anilistGateway AniListGateway, jikanGateway JikanGateway) *Useca
 
 // CurrentSeasonAnime は現在のシーズンのアニメ一覧を返す（ホーム画面向け、キャッシュあり）。
 func (u *Usecase) CurrentSeasonAnime(ctx context.Context) ([]anilist.SearchResult, error) {
-	return u.seasonAnimeCache.Get("", func() ([]anilist.SearchResult, error) {
+	return u.seasonAnimeCache.Get(ctx, "", func(ctx context.Context) ([]anilist.SearchResult, error) {
 		return u.anilist.SeasonAnime(ctx)
 	})
 }
@@ -72,14 +72,14 @@ func (u *Usecase) CurrentSeasonAnime(ctx context.Context) ([]anilist.SearchResul
 // （season+yearごとにキャッシュあり）。
 func (u *Usecase) SeasonAnimeFor(ctx context.Context, season string, year int) ([]anilist.SearchResult, error) {
 	key := season + ":" + strconv.Itoa(year)
-	return u.seasonBrowseCache.Get(key, func() ([]anilist.SearchResult, error) {
+	return u.seasonBrowseCache.Get(ctx, key, func(ctx context.Context) ([]anilist.SearchResult, error) {
 		return u.anilist.SeasonAnimeFor(ctx, season, year)
 	})
 }
 
 // TrendingAnime は人気アニメ一覧を返す（キャッシュあり）。
 func (u *Usecase) TrendingAnime(ctx context.Context) ([]anilist.SearchResult, error) {
-	return u.trendingCache.Get("", func() ([]anilist.SearchResult, error) {
+	return u.trendingCache.Get(ctx, "", func(ctx context.Context) ([]anilist.SearchResult, error) {
 		return u.anilist.TrendingAnime(ctx)
 	})
 }
@@ -87,7 +87,7 @@ func (u *Usecase) TrendingAnime(ctx context.Context) ([]anilist.SearchResult, er
 // TrendingManga はAniListの人気順TOP10を取得し、各作品のMAL IDを使ってJikanから
 // ランキング順位・会員数・掲載誌を補って返す（キャッシュあり）。
 func (u *Usecase) TrendingManga(ctx context.Context) ([]MangaRankingItem, error) {
-	return u.trendingMangaCache.Get("", func() ([]MangaRankingItem, error) {
+	return u.trendingMangaCache.Get(ctx, "", func(ctx context.Context) ([]MangaRankingItem, error) {
 		return u.fetchTrendingManga(ctx)
 	})
 }
