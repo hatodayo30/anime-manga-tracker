@@ -21,6 +21,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/search"
 	translateusecase "github.com/hatodayo30/anime-manga-tracker/internal/usecase/translate"
+	"github.com/hatodayo30/anime-manga-tracker/migrations"
 )
 
 func main() {
@@ -44,6 +45,12 @@ func run() error {
 	}
 	defer pool.Close()
 
+	// RDS では docker-entrypoint-initdb.d が使えないので、起動時に未適用分を流す。
+	// スキーマが揃う前にリクエストを受けないよう、サーバー起動より先に実行する。
+	if err := postgres.Migrate(ctx, pool, migrations.FS); err != nil {
+		return err
+	}
+
 	recordRepo := postgres.NewRecordRepository(pool)
 	recordUsecase := record.NewUsecase(recordRepo)
 	recordHandler := handler.NewRecordHandler(recordUsecase)
@@ -51,7 +58,7 @@ func run() error {
 	userRepo := postgres.NewUserRepository(pool)
 	sessionRepo := postgres.NewSessionRepository(pool)
 	authUsecase := auth.NewService(userRepo, sessionRepo)
-	authHandler := handler.NewAuthHandler(authUsecase)
+	authHandler := handler.NewAuthHandler(authUsecase, cfg.CookieSecure)
 	authMiddleware := middleware.NewAuth(authUsecase)
 
 	anilistClient := anilist.NewClient()

@@ -11,6 +11,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
+# migrations/ は embed.FS でバイナリに焼き込むため、ビルド時に必要
+COPY migrations/ migrations/
 RUN CGO_ENABLED=0 go build -o /app/server ./cmd/server
 
 FROM alpine:3.20

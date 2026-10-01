@@ -85,20 +85,30 @@ Fargate を選ぶのは**学習が目的だから**であり、このアプリ�
 
 概算は Phase 1 で月$20 前後、Phase 2 で月$38 前後。**正確な額は AWS Pricing Calculator で確認すること。**
 
-#### Phase 0: コード側の前提（デプロイ作業より先・ローカルで完結）
+#### Phase 0: コード側の前提（デプロイ作業より先・ローカルで完結）— **完了（2026-10-01）**
 
-いずれも AWS アカウントなしで進められる。
-
-- **`/healthz` エンドポイントの追加** — 現在 `internal/handler/router.go` に存在しない。
-  ECS のコンテナヘルスチェックと、Phase 2 の ALB ターゲットグループが要求する。
-  **AniList / Jikan は叩かないこと**（ヘルスチェックのたびに上流のレート制限を消費する）。
-  DB の疎通確認までに留める。
-- **マイグレーションランナーの実装** — RDS では `docker-entrypoint-initdb.d` が使えない。
-  `migrations/` は `NNNN_name.up.sql` / `.down.sql` という `golang-migrate` の規約どおりの
-  命名なので、`embed.FS` でバイナリに焼き込んで起動時に実行する。
-  **単一タスク固定なので同時実行レースは起きない**（複数タスク構成なら別途ロックが要る）。
-- **セッション Cookie の `Secure` 属性を環境変数で切り替え可能にする** — Phase 1 は平文 HTTP
-  アクセスなので `Secure` を立てるとログインできない。Phase 2 の HTTPS 化で有効にする。
+- ~~**`/healthz` エンドポイントの追加**~~ — 実装済み（`internal/handler/health_handler.go`）。
+  DB の `Ping` までに留め、AniList / Jikan は叩かない。タイムアウトは 2 秒
+  （ECS のコンテナヘルスチェックの既定 5 秒より短くして、こちらから 503 を返せるようにした）。
+- ~~**マイグレーションランナーの実装**~~ — 実装済み。`migrations/embed.go` が `*.sql` を
+  `embed.FS` に焼き込み、`internal/infrastructure/postgres/migrate.go` が起動時に未適用分だけを
+  バージョン昇順で適用する。適用済みは `applied_migrations` テーブルに記録。
+  - `golang-migrate` は**入れなかった**。あちらの DB ドライバは `database/sql` 前提で、
+    既存の `pgxpool` とは別に接続を張ることになる。対象 4 本・単一タスクに対して
+    依存を増やす釣り合いが取れないと判断した。乗り換え余地を残すため、記録テーブル名は
+    `schema_migrations` ではなく `applied_migrations` にしてある。
+  - 単一タスク固定なので本来不要だが、`pg_advisory_lock` は掛けてある（デプロイ戦略の
+    設定ミスや手元からの直接実行と重なったときの保険。取得コストはほぼゼロ）。
+  - **既存のローカル DB への配慮**: `docker-entrypoint-initdb.d` で初期化済みの `pgdata`
+    ボリュームには 0001〜0004 が適用されているが記録テーブルが無い。そのまま流すと 0001 の
+    `CREATE TABLE` が衝突し、0004 の `UPDATE` が漫画の進捗を消す。`records` テーブルの存在を
+    検出したら `baselineVersion`（= 4）までを適用済みとして記録してから差分を流す。
+  - `docker-compose.yml` の initdb マウントは削除した。ローカルと RDS で適用経路を分けない。
+  - `Dockerfile` に `COPY migrations/ migrations/` を追加（embed はビルド時に SQL を要求する）。
+- ~~**セッション Cookie の `Secure` 属性を環境変数で切り替え可能にする**~~ — 実装済み。
+  `COOKIE_SECURE`（既定 `false`）。真偽値として読めない値は既定値に倒さず起動時エラーにする
+  （`ture` のような綴り間違いで `Secure` が黙って外れるのを防ぐ）。
+  Phase 2 の HTTPS 化で `COOKIE_SECURE=true` にすること。
 
 #### Phase 1: 最小構成で動かす（ALB なし）
 
