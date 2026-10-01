@@ -15,6 +15,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/infrastructure/postgres"
 	"github.com/hatodayo30/anime-manga-tracker/internal/jikan"
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
+	"github.com/hatodayo30/anime-manga-tracker/internal/scheduler"
 	"github.com/hatodayo30/anime-manga-tracker/internal/translate"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
@@ -85,6 +86,14 @@ func run() error {
 		WebDir:      "frontend/dist",
 	})
 
+	// ホーム画面向けキャッシュを起動時に温め、以後も定期的に取り直す。利用者が冷えたキャッシュや
+	// TTL切れを踏んで、外部APIの数秒の待ち時間を肩代わりするのを防ぐ。
+	waitJobs := scheduler.New(scheduler.Job{
+		Name:     "home-cache-warm",
+		Interval: home.WarmInterval,
+		Run:      homeUsecase.Warm,
+	}).Start(ctx)
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           e,
@@ -99,7 +108,12 @@ func run() error {
 	}()
 
 	log.Printf("listening on :%s", cfg.Port)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	err = srv.ListenAndServe()
+
+	stop()     // シグナル以外の理由で抜けた場合も定期ジョブを止める
+	waitJobs() // 実行中のジョブが終わるのを待ってから、deferのpool.Closeに進む
+
+	if err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil

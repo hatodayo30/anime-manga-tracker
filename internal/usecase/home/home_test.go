@@ -2,6 +2,7 @@ package home_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -14,12 +15,15 @@ import (
 type fakeAniList struct {
 	seasonAnimeCalls    int32
 	seasonAnimeForCalls int32
+	trendingAnimeCalls  int32
+	trendingMangaCalls  int32
 	trendingManga       []anilist.SearchResult
+	err                 error // 非nilなら全メソッドがこれを返す
 }
 
 func (f *fakeAniList) SeasonAnime(ctx context.Context) ([]anilist.SearchResult, error) {
 	atomic.AddInt32(&f.seasonAnimeCalls, 1)
-	return []anilist.SearchResult{{Title: "Current Season Anime"}}, nil
+	return []anilist.SearchResult{{Title: "Current Season Anime"}}, f.err
 }
 
 func (f *fakeAniList) SeasonAnimeFor(ctx context.Context, season string, year int) ([]anilist.SearchResult, error) {
@@ -28,11 +32,13 @@ func (f *fakeAniList) SeasonAnimeFor(ctx context.Context, season string, year in
 }
 
 func (f *fakeAniList) TrendingAnime(ctx context.Context) ([]anilist.SearchResult, error) {
-	return []anilist.SearchResult{{Title: "Trending"}}, nil
+	atomic.AddInt32(&f.trendingAnimeCalls, 1)
+	return []anilist.SearchResult{{Title: "Trending"}}, f.err
 }
 
 func (f *fakeAniList) TrendingManga(ctx context.Context) ([]anilist.SearchResult, error) {
-	return f.trendingManga, nil
+	atomic.AddInt32(&f.trendingMangaCalls, 1)
+	return f.trendingManga, f.err
 }
 
 type fakeJikan struct {
@@ -169,5 +175,79 @@ func TestUsecase_TrendingManga_ToleratesJikanFailure(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].MalRank != nil {
 		t.Errorf("expected item without enrichment, got %+v", items)
+	}
+}
+
+// Warm はホーム画面向けの3つのキャッシュを埋める。埋めたあとは外部APIを叩かずに返る。
+func TestUsecase_Warm_FillsHomeCaches(t *testing.T) {
+	anilistGW := &fakeAniList{}
+	u := home.NewUsecase(anilistGW, &fakeJikan{})
+
+	if err := u.Warm(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := u.CurrentSeasonAnime(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := u.TrendingAnime(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := u.TrendingManga(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if anilistGW.seasonAnimeCalls != 1 || anilistGW.trendingAnimeCalls != 1 || anilistGW.trendingMangaCalls != 1 {
+		t.Errorf("expected the warmed caches to serve the requests, got %d/%d/%d calls",
+			anilistGW.seasonAnimeCalls, anilistGW.trendingAnimeCalls, anilistGW.trendingMangaCalls)
+	}
+}
+
+// Warm はTTLが残っていても取り直す。TTLが切れてから動くのでは、利用者が古い値を踏む前に
+// 入れ替えるという目的を果たせない。
+func TestUsecase_Warm_RefreshesWithinTTL(t *testing.T) {
+	anilistGW := &fakeAniList{}
+	u := home.NewUsecase(anilistGW, &fakeJikan{})
+
+	if _, err := u.CurrentSeasonAnime(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := u.Warm(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if anilistGW.seasonAnimeCalls != 2 {
+		t.Errorf("expected Warm to refetch inside the TTL, got %d calls", anilistGW.seasonAnimeCalls)
+	}
+}
+
+// シーズンブラウジング用キャッシュは温めない（キーが際限なく増えうるため）。
+func TestUsecase_Warm_SkipsSeasonBrowseCache(t *testing.T) {
+	anilistGW := &fakeAniList{}
+	u := home.NewUsecase(anilistGW, &fakeJikan{})
+
+	if err := u.Warm(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if anilistGW.seasonAnimeForCalls != 0 {
+		t.Errorf("expected the season browsing cache to be left alone, got %d calls", anilistGW.seasonAnimeForCalls)
+	}
+}
+
+// 1つ失敗しても残りは取りに行き、失敗はまとめて返す。
+func TestUsecase_Warm_ReportsFailures(t *testing.T) {
+	wantErr := errors.New("anilist down")
+	anilistGW := &fakeAniList{err: wantErr}
+	u := home.NewUsecase(anilistGW, &fakeJikan{})
+
+	err := u.Warm(context.Background())
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("got error %v, want it to wrap %v", err, wantErr)
+	}
+
+	if anilistGW.seasonAnimeCalls != 1 || anilistGW.trendingAnimeCalls != 1 || anilistGW.trendingMangaCalls != 1 {
+		t.Errorf("expected every target to be attempted despite failures, got %d/%d/%d calls",
+			anilistGW.seasonAnimeCalls, anilistGW.trendingAnimeCalls, anilistGW.trendingMangaCalls)
 	}
 }

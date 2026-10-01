@@ -366,3 +366,144 @@ func TestTTLCache_KeepsStaleWhenRefreshFails(t *testing.T) {
 		t.Errorf("got (%q, %v), want the stale value to survive a failed refresh", v, err)
 	}
 }
+
+// Refresh はTTLが残っていても取り直す。定期リフレッシュが「TTLが切れるまで何もしない」
+// のでは、利用者がTTL切れを踏む機会を減らせない。
+func TestTTLCache_RefreshBypassesTTL(t *testing.T) {
+	c := cache.New[int](time.Hour) // TTLは十分に残っている状況
+	var calls int32
+	fetch := func(context.Context) (int, error) { return int(atomic.AddInt32(&calls, 1)), nil }
+
+	if v, _ := c.Get(context.Background(), "k", fetch); v != 1 {
+		t.Fatalf("got %d, want 1", v)
+	}
+	if err := c.Refresh(context.Background(), "k", fetch); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if v, _ := c.Get(context.Background(), "k", fetch); v != 2 {
+		t.Errorf("expected Refresh to replace the cached value, got %d", v)
+	}
+	if calls != 2 {
+		t.Errorf("expected exactly 2 fetches, got %d", calls)
+	}
+}
+
+// 値がまだ無いキーでは、Refresh は通常の取得と同じように値を詰める（起動時のウォームアップ）。
+func TestTTLCache_RefreshFillsEmptyCache(t *testing.T) {
+	c := cache.New[string](time.Hour)
+	var calls int32
+	fetch := func(context.Context) (string, error) {
+		atomic.AddInt32(&calls, 1)
+		return "warmed", nil
+	}
+
+	if err := c.Refresh(context.Background(), "k", fetch); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	v, err := c.Get(context.Background(), "k", fetch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != "warmed" {
+		t.Errorf("got %q, want %q", v, "warmed")
+	}
+	if calls != 1 {
+		t.Errorf("expected the warmed value to be served from cache, got %d fetches", calls)
+	}
+}
+
+// Refresh の実行中も、既存の値は待たされずに返る。定期リフレッシュが利用者を
+// 止めてしまっては、ウォームアップの意味がない。
+func TestTTLCache_RefreshDoesNotBlockGet(t *testing.T) {
+	c := cache.New[int](time.Hour)
+	release := make(chan struct{})
+	var calls int32
+	fetch := func(context.Context) (int, error) {
+		n := int(atomic.AddInt32(&calls, 1))
+		if n > 1 {
+			<-release
+		}
+		return n, nil
+	}
+
+	if v, _ := c.Get(context.Background(), "k", fetch); v != 1 {
+		t.Fatalf("got %d, want 1", v)
+	}
+
+	refreshDone := make(chan error, 1)
+	go func() { refreshDone <- c.Refresh(context.Background(), "k", fetch) }()
+	waitFor(t, "refresh to start", func() bool { return atomic.LoadInt32(&calls) >= 2 })
+
+	// 取り直しが終わるまでは従来の値が返る（ここでブロックしたらテストはタイムアウトする）
+	if v, err := c.Get(context.Background(), "k", fetch); v != 1 || err != nil {
+		t.Errorf("got (%d, %v), want the previous value (1, nil)", v, err)
+	}
+
+	close(release)
+	if err := <-refreshDone; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v, _ := c.Get(context.Background(), "k", fetch); v != 2 {
+		t.Errorf("got %d, want the refreshed value 2", v)
+	}
+}
+
+// 既に取得・取り直しが走っているキーでは、Refresh は何もしない。
+// レート制限付きの上流に、定期リフレッシュぶんの重複リクエストを積まないための挙動。
+func TestTTLCache_RefreshSkipsWhenFetchInFlight(t *testing.T) {
+	c := cache.New[int](time.Hour)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var calls int32
+
+	fetch := func(context.Context) (int, error) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			close(started)
+			<-release
+		}
+		return 1, nil
+	}
+
+	got := make(chan int, 1)
+	go func() {
+		v, _ := c.Get(context.Background(), "k", fetch)
+		got <- v
+	}()
+	<-started
+
+	if err := c.Refresh(context.Background(), "k", fetch); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("expected Refresh to skip while a fetch was in flight, got %d fetches", n)
+	}
+
+	close(release)
+	<-got
+}
+
+// Refresh が失敗しても古い値は捨てず、エラーだけを返す（呼び出し元がログに出せるように）。
+func TestTTLCache_RefreshKeepsValueOnFailure(t *testing.T) {
+	c := cache.New[string](time.Hour)
+	wantErr := errors.New("upstream down")
+	var calls int32
+	fetch := func(context.Context) (string, error) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			return "first", nil
+		}
+		return "", wantErr
+	}
+
+	if _, err := c.Get(context.Background(), "k", fetch); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := c.Refresh(context.Background(), "k", fetch); !errors.Is(err, wantErr) {
+		t.Fatalf("got error %v, want %v", err, wantErr)
+	}
+
+	if v, err := c.Get(context.Background(), "k", fetch); v != "first" || err != nil {
+		t.Errorf("got (%q, %v), want the previous value to survive a failed refresh", v, err)
+	}
+}
