@@ -1,6 +1,7 @@
 package cache_test
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"sync"
@@ -16,7 +17,7 @@ func TestTTLCache_CachesPerKey(t *testing.T) {
 	var calls int32
 
 	get := func(key string) string {
-		v, err := c.Get(key, func() (string, error) {
+		v, err := c.Get(context.Background(), key, func(context.Context) (string, error) {
 			atomic.AddInt32(&calls, 1)
 			return "value-" + key, nil
 		})
@@ -42,21 +43,6 @@ func TestTTLCache_CachesPerKey(t *testing.T) {
 	}
 }
 
-func TestTTLCache_RefetchesAfterTTL(t *testing.T) {
-	c := cache.New[int](10 * time.Millisecond)
-	var calls int32
-
-	fetch := func() (int, error) { return int(atomic.AddInt32(&calls, 1)), nil }
-
-	if v, _ := c.Get("k", fetch); v != 1 {
-		t.Errorf("got %d, want 1", v)
-	}
-	time.Sleep(20 * time.Millisecond)
-	if v, _ := c.Get("k", fetch); v != 2 {
-		t.Errorf("expected refetch after TTL, got %d", v)
-	}
-}
-
 // 同じキーへの取得が同時に走っても fetch は1回しか呼ばれず、全員が同じ結果を受け取る。
 // シーズン画面の二重リクエストがAniListのスロットルに二重に並ぶのを防ぐための挙動。
 func TestTTLCache_SingleFlight(t *testing.T) {
@@ -71,7 +57,7 @@ func TestTTLCache_SingleFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			v, err := c.Get("same", func() (string, error) {
+			v, err := c.Get(context.Background(), "same", func(context.Context) (string, error) {
 				atomic.AddInt32(&calls, 1)
 				<-release // 全員が待ち合わせに入るまでfetchを終わらせない
 				return "shared", nil
@@ -105,7 +91,7 @@ func TestTTLCache_DoesNotCacheErrors(t *testing.T) {
 	wantErr := errors.New("boom")
 	var calls int32
 
-	_, err := c.Get("k", func() (string, error) {
+	_, err := c.Get(context.Background(), "k", func(context.Context) (string, error) {
 		atomic.AddInt32(&calls, 1)
 		return "", wantErr
 	})
@@ -114,7 +100,7 @@ func TestTTLCache_DoesNotCacheErrors(t *testing.T) {
 	}
 
 	// 失敗は保持しないので、次の呼び出しで再試行される
-	v, err := c.Get("k", func() (string, error) {
+	v, err := c.Get(context.Background(), "k", func(context.Context) (string, error) {
 		atomic.AddInt32(&calls, 1)
 		return "recovered", nil
 	})
@@ -134,8 +120,8 @@ func TestTTLCache_BoundedEvictsOldest(t *testing.T) {
 	c := cache.NewBounded[string](time.Minute, maxEntries)
 	var calls int32
 
-	fetch := func(key string) func() (string, error) {
-		return func() (string, error) {
+	fetch := func(key string) func(context.Context) (string, error) {
+		return func(context.Context) (string, error) {
 			atomic.AddInt32(&calls, 1)
 			return "value-" + key, nil
 		}
@@ -144,7 +130,7 @@ func TestTTLCache_BoundedEvictsOldest(t *testing.T) {
 	// 上限を超えるまで別々のキーを詰める。fetchedAtで古い順に捨てるため、間隔を空ける
 	keys := []string{"0", "1", "2", "3"}
 	for _, k := range keys {
-		if _, err := c.Get(k, fetch(k)); err != nil {
+		if _, err := c.Get(context.Background(), k, fetch(k)); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		time.Sleep(2 * time.Millisecond)
@@ -155,7 +141,7 @@ func TestTTLCache_BoundedEvictsOldest(t *testing.T) {
 
 	// 最新の3件はキャッシュに残っている
 	for _, k := range keys[1:] {
-		if _, err := c.Get(k, fetch(k)); err != nil {
+		if _, err := c.Get(context.Background(), k, fetch(k)); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
@@ -164,7 +150,7 @@ func TestTTLCache_BoundedEvictsOldest(t *testing.T) {
 	}
 
 	// 最も古いキーは追い出されているので取り直しになる
-	if _, err := c.Get("0", fetch("0")); err != nil {
+	if _, err := c.Get(context.Background(), "0", fetch("0")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if calls != 5 {
@@ -177,7 +163,7 @@ func TestTTLCache_BoundedKeepsEntryCountAtLimit(t *testing.T) {
 	c := cache.NewBounded[int](time.Minute, maxEntries)
 
 	for i := range 50 {
-		if _, err := c.Get(strconv.Itoa(i), func() (int, error) { return i, nil }); err != nil {
+		if _, err := c.Get(context.Background(), strconv.Itoa(i), func(context.Context) (int, error) { return i, nil }); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
@@ -185,7 +171,7 @@ func TestTTLCache_BoundedKeepsEntryCountAtLimit(t *testing.T) {
 	// 上限を超えたぶんが捨てられていれば、直近 maxEntries 件だけがfetchなしで返る
 	var refetched int
 	for i := 50 - maxEntries; i < 50; i++ {
-		if _, err := c.Get(strconv.Itoa(i), func() (int, error) {
+		if _, err := c.Get(context.Background(), strconv.Itoa(i), func(context.Context) (int, error) {
 			refetched++
 			return i, nil
 		}); err != nil {
@@ -194,5 +180,189 @@ func TestTTLCache_BoundedKeepsEntryCountAtLimit(t *testing.T) {
 	}
 	if refetched != 0 {
 		t.Errorf("expected the %d most recent keys to remain cached, %d were refetched", maxEntries, refetched)
+	}
+}
+
+// staleFactor はキャッシュ側の定数（TTLの何倍まで古い値を返してよいか）に合わせたもの。
+const staleFactor = 10
+
+// waitFor は cond が真になるまで待つ。バックグラウンド更新の完了のように、
+// 完了時刻がスケジューラ任せになるものを待つために使う。
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// TTLが切れていても古い値は即座に返り、取り直しはバックグラウンドで走る。
+// TTLが切れた瞬間に当たった人だけが外部APIの数秒を肩代わりする状態を無くすための挙動。
+func TestTTLCache_ServesStaleWhileRevalidating(t *testing.T) {
+	const ttl = 30 * time.Millisecond
+	c := cache.New[int](ttl)
+
+	var calls int32
+	release := make(chan struct{})
+	fetch := func(context.Context) (int, error) {
+		n := int(atomic.AddInt32(&calls, 1))
+		if n > 1 {
+			<-release // バックグラウンド更新は、テストが許すまで終わらせない
+		}
+		return n, nil
+	}
+
+	if v, err := c.Get(context.Background(), "k", fetch); v != 1 || err != nil {
+		t.Fatalf("got (%d, %v), want (1, nil)", v, err)
+	}
+	time.Sleep(ttl * 2)
+
+	// 更新が終わっていなくても古い値がそのまま返る（ここでブロックしたらテストはタイムアウトする）
+	if v, err := c.Get(context.Background(), "k", fetch); v != 1 || err != nil {
+		t.Fatalf("got (%d, %v), want stale (1, nil)", v, err)
+	}
+	waitFor(t, "background refresh to start", func() bool { return atomic.LoadInt32(&calls) >= 2 })
+
+	// 更新が終われば新しい値に入れ替わる
+	close(release)
+	waitFor(t, "refreshed value", func() bool {
+		v, err := c.Get(context.Background(), "k", fetch)
+		return err == nil && v > 1
+	})
+}
+
+// 古い値を返してよいのは staleFactor×TTL まで。それを超えたら待たせてでも取り直す。
+// 上流が落ちている間ずっと腐ったデータを配り続けないための上限。
+func TestTTLCache_RefetchesBeyondStaleLimit(t *testing.T) {
+	const ttl = 5 * time.Millisecond
+	c := cache.New[int](ttl)
+
+	var calls int32
+	fetch := func(context.Context) (int, error) { return int(atomic.AddInt32(&calls, 1)), nil }
+
+	if v, _ := c.Get(context.Background(), "k", fetch); v != 1 {
+		t.Fatalf("got %d, want 1", v)
+	}
+
+	// この間は誰もアクセスしないのでバックグラウンド更新も走らない
+	time.Sleep(ttl * (staleFactor + 1))
+
+	if v, _ := c.Get(context.Background(), "k", fetch); v != 2 {
+		t.Errorf("expected a fresh value past the stale limit, got %d", v)
+	}
+}
+
+// バックグラウンド更新は、きっかけとなったリクエストのctxがキャンセルされても走り切る。
+// ハンドラのctxはレスポンスを返した時点でキャンセルされるため、引き継ぐと更新が必ず失敗する。
+func TestTTLCache_BackgroundRefreshOutlivesRequestContext(t *testing.T) {
+	const ttl = 20 * time.Millisecond
+	c := cache.New[int](ttl)
+
+	var calls int32
+	started := make(chan struct{})
+	fetch := func(ctx context.Context) (int, error) {
+		n := int(atomic.AddInt32(&calls, 1))
+		if n > 1 {
+			close(started)
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+				return 0, ctx.Err() // キャンセルが引き継がれていたらここに来る
+			}
+		}
+		return n, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if v, _ := c.Get(ctx, "k", fetch); v != 1 {
+		t.Fatalf("got %d, want 1", v)
+	}
+	time.Sleep(ttl * 2)
+	if v, _ := c.Get(ctx, "k", fetch); v != 1 {
+		t.Fatalf("got %d, want stale 1", v)
+	}
+
+	<-started
+	cancel() // リクエストが終わってハンドラのctxが切れた状況
+
+	waitFor(t, "refresh to finish despite the canceled request context", func() bool {
+		v, err := c.Get(context.Background(), "k", fetch)
+		return err == nil && v == 2
+	})
+}
+
+// staleな値への同時アクセスが重なっても、バックグラウンド更新は1本しか走らない。
+// レート制限付きの上流に更新リクエストを積み上げないための挙動。
+func TestTTLCache_SingleBackgroundRefresh(t *testing.T) {
+	const ttl = 20 * time.Millisecond
+	c := cache.New[int](ttl)
+
+	var calls int32
+	release := make(chan struct{})
+	fetch := func(context.Context) (int, error) {
+		n := int(atomic.AddInt32(&calls, 1))
+		if n > 1 {
+			<-release
+		}
+		return n, nil
+	}
+
+	if _, err := c.Get(context.Background(), "k", fetch); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	time.Sleep(ttl * 2)
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if v, err := c.Get(context.Background(), "k", fetch); v != 1 || err != nil {
+				t.Errorf("got (%d, %v), want stale (1, nil)", v, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	waitFor(t, "background refresh to start", func() bool { return atomic.LoadInt32(&calls) >= 2 })
+	time.Sleep(10 * time.Millisecond) // 2本目が走るなら、この間に現れる
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("expected exactly one background refresh, got %d fetches in total", n)
+	}
+	close(release)
+}
+
+// バックグラウンド更新が失敗しても古い値は捨てない。上流が一時的に落ちている間、
+// stale上限までは手元の値で凌ぐ。
+func TestTTLCache_KeepsStaleWhenRefreshFails(t *testing.T) {
+	const ttl = 20 * time.Millisecond
+	c := cache.New[string](ttl)
+
+	var calls int32
+	fetch := func(context.Context) (string, error) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			return "first", nil
+		}
+		return "", errors.New("upstream down")
+	}
+
+	if v, err := c.Get(context.Background(), "k", fetch); v != "first" || err != nil {
+		t.Fatalf("got (%q, %v), want (\"first\", nil)", v, err)
+	}
+	time.Sleep(ttl * 2)
+
+	if v, err := c.Get(context.Background(), "k", fetch); v != "first" || err != nil {
+		t.Fatalf("got (%q, %v), want stale (\"first\", nil)", v, err)
+	}
+	waitFor(t, "background refresh to fail", func() bool { return atomic.LoadInt32(&calls) >= 2 })
+
+	// 更新に失敗しても、stale上限内なら古い値がエラーなしで返り続ける
+	if v, err := c.Get(context.Background(), "k", fetch); v != "first" || err != nil {
+		t.Errorf("got (%q, %v), want the stale value to survive a failed refresh", v, err)
 	}
 }

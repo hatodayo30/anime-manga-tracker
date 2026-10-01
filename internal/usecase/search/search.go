@@ -97,7 +97,7 @@ func (u *Usecase) Recommendations(ctx context.Context, mediaType domain.MediaTyp
 	sort.Strings(sortedGenres)
 	cacheKey := string(mediaType) + "|" + strings.Join(sortedGenres, ",")
 
-	return u.recommendCache.Get(cacheKey, func() ([]anilist.SearchResult, error) {
+	return u.recommendCache.Get(ctx, cacheKey, func(ctx context.Context) ([]anilist.SearchResult, error) {
 		return u.anilist.ByGenres(ctx, genres, mediaType)
 	})
 }
