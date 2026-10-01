@@ -11,6 +11,7 @@ type Handlers struct {
 	Search      *SearchHandler
 	Home        *HomeHandler
 	Translate   *TranslateHandler
+	Health      *HealthHandler
 	RequireUser echo.MiddlewareFunc
 	WebDir      string
 }
@@ -20,6 +21,9 @@ type Handlers struct {
 func NewRouter(h Handlers) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
+
+	// コンテナ/ALBのヘルスチェック用。静的ファイルのワイルドカードより先に登録する。
+	e.GET("/healthz", h.Health.Healthz)
 
 	records := e.Group("/api/records", h.RequireUser)
 	records.GET("", h.Record.List)

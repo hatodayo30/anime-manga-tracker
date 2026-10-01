@@ -125,8 +125,9 @@ psql "$DATABASE_URL" -f migrations/0004_manga_volume_progress.up.sql
 | `GET` | `/api/home/trending` | 人気アニメ |
 | `GET` | `/api/home/trending-manga` | 人気漫画（Jikan でランキング・掲載誌を補完） |
 | `POST` | `/api/translate` | テキストの機械翻訳 |
+| `GET` | `/healthz` | ヘルスチェック（DB 疎通のみ確認。`{"status":"ok"}` / 失敗時 503） |
 
-`/api/*` 以外のパスは `frontend/dist` の静的ファイルにフォールバックします（SPA ルーティング）。
+`/api/*` と `/healthz` 以外のパスは `frontend/dist` の静的ファイルにフォールバックします（SPA ルーティング）。
 
 ## 開発コマンド
 
