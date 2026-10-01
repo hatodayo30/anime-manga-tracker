@@ -65,12 +65,15 @@ func run() error {
 	translateUsecase := translateusecase.NewUsecase(translateClient)
 	translateHandler := handler.NewTranslateHandler(translateUsecase)
 
+	healthHandler := handler.NewHealthHandler(pool)
+
 	e := handler.NewRouter(handler.Handlers{
 		Record:      recordHandler,
 		Auth:        authHandler,
 		Search:      searchHandler,
 		Home:        homeHandler,
 		Translate:   translateHandler,
+		Health:      healthHandler,
 		RequireUser: authMiddleware.RequireUser,
 		WebDir:      "frontend/dist",
 	})
