@@ -13,10 +13,13 @@ import (
 
 type AuthHandler struct {
 	service *auth.Service
+	// cookieSecure はセッションCookieに Secure 属性を立てるかどうか（COOKIE_SECURE 由来）。
+	// 平文HTTPの環境で立てるとCookieが送られずログインできないため、設定で切り替える。
+	cookieSecure bool
 }
 
-func NewAuthHandler(s *auth.Service) *AuthHandler {
-	return &AuthHandler{service: s}
+func NewAuthHandler(s *auth.Service, cookieSecure bool) *AuthHandler {
+	return &AuthHandler{service: s, cookieSecure: cookieSecure}
 }
 
 type credentialsInput struct {
@@ -39,7 +42,7 @@ func (h *AuthHandler) SignUp(c echo.Context) error {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 
-	setSessionCookie(c, token, expiresAt)
+	h.setSessionCookie(c, token, expiresAt)
 	return c.JSON(http.StatusCreated, user)
 }
 
@@ -58,7 +61,7 @@ func (h *AuthHandler) Login(c echo.Context) error {
 		return writeError(c, http.StatusBadRequest, err.Error())
 	}
 
-	setSessionCookie(c, token, expiresAt)
+	h.setSessionCookie(c, token, expiresAt)
 	return c.JSON(http.StatusOK, user)
 }
 
@@ -67,7 +70,7 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 	if cookie, err := c.Cookie(middleware.SessionCookieName); err == nil {
 		_ = h.service.Logout(c.Request().Context(), cookie.Value)
 	}
-	clearSessionCookie(c)
+	h.clearSessionCookie(c)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -85,18 +88,21 @@ func (h *AuthHandler) Me(c echo.Context) error {
 	return c.JSON(http.StatusOK, user)
 }
 
-func setSessionCookie(c echo.Context, token string, expiresAt time.Time) {
+func (h *AuthHandler) setSessionCookie(c echo.Context, token string, expiresAt time.Time) {
 	c.SetCookie(&http.Cookie{
 		Name:     middleware.SessionCookieName,
 		Value:    token,
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
+		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
-func clearSessionCookie(c echo.Context) {
+// clearSessionCookie は削除用のCookieを返す。属性は setSessionCookie と揃える
+// （Secure が食い違うとブラウザが別のCookieとみなして上書きできない）。
+func (h *AuthHandler) clearSessionCookie(c echo.Context) {
 	c.SetCookie(&http.Cookie{
 		Name:     middleware.SessionCookieName,
 		Value:    "",
@@ -104,6 +110,7 @@ func clearSessionCookie(c echo.Context) {
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }

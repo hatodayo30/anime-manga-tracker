@@ -5,6 +5,8 @@ services:
     environment:
       PORT: "8080"
       DATABASE_URL: postgres://anime_manga:anime_manga@postgres:5432/anime_manga_tracker?sslmode=disable
+      # 平文HTTPでアクセスするのでCookieの Secure は立てない
+      COOKIE_SECURE: "false"
     ports:
       - "8090:8080"
     depends_on:
@@ -22,11 +24,8 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # 初回起動時にのみ自動実行される（ファイル名の昇順で実行）
-      - ./migrations/0001_init.up.sql:/docker-entrypoint-initdb.d/0001_init.sql:ro
-      - ./migrations/0002_users.up.sql:/docker-entrypoint-initdb.d/0002_users.sql:ro
-      - ./migrations/0003_record_rating_memo.up.sql:/docker-entrypoint-initdb.d/0003_record_rating_memo.sql:ro
-      - ./migrations/0004_manga_volume_progress.up.sql:/docker-entrypoint-initdb.d/0004_manga_volume_progress.sql:ro
+      # マイグレーションは docker-entrypoint-initdb.d ではなくアプリ起動時に適用する
+      # （RDS では initdb が使えず、ローカルと本番で経路を分けたくないため）
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U anime_manga -d anime_manga_tracker"]
       interval: 5s

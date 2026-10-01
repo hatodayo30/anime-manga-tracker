@@ -40,7 +40,7 @@ internal/
   middleware/        セッション Cookie による認証ミドルウェア
   infrastructure/postgres/  リポジトリ実装（pgx）
   anilist/ jikan/ translate/  外部 API クライアント
-migrations/          SQL マイグレーション（up / down）
+migrations/          SQL マイグレーション（up / down）と embed 用パッケージ
 frontend/            React + Vite のフロントエンド
 ```
 
@@ -56,8 +56,8 @@ usecase 層はリポジトリ / ゲートウェイのインターフェースを
 docker compose up --build
 ```
 
-http://localhost:8090 で起動します。`migrations/*.up.sql` は Postgres の初回起動時に
-自動適用されます（ファイル名の昇順）。
+http://localhost:8090 で起動します。`migrations/*.up.sql` のうち未適用のものは
+アプリの起動時に自動適用されます。
 
 ### ローカル開発（ホットリロードあり）
 
@@ -88,19 +88,37 @@ Vite のプロキシ先ポートは `BACKEND_PORT` → `PORT` → `8080` の順�
 | --- | --- | --- | --- |
 | `DATABASE_URL` | ✓ | — | PostgreSQL 接続文字列 |
 | `PORT` | | `8080` | API サーバーの待ち受けポート |
+| `COOKIE_SECURE` | | `false` | セッション Cookie に `Secure` を立てるか。HTTPS でアクセスする環境では `true` |
 
 ローカルでは `.env` が読み込まれます（無くてもエラーにはなりません）。本番では実際の環境変数を使う想定です。
 
+`COOKIE_SECURE` を平文 HTTP の環境で `true` にすると、ブラウザが Cookie を送らずログインできません。
+真偽値として解釈できない値を入れた場合は、黙って既定値に倒さず起動時にエラーになります。
+
 ## マイグレーション
 
-`migrations/` に `NNNN_name.up.sql` / `.down.sql` の組で置いています。Compose の初回起動以外で
-適用する場合は psql で直接流してください。
+`migrations/` に `NNNN_name.up.sql` / `.down.sql` の組で置いています。up は `embed.FS` で
+バイナリに焼き込まれ、**サーバー起動時に未適用のものだけがバージョン昇順で適用されます**。
+適用済みのバージョンは `applied_migrations` テーブルに記録されます。
+
+- 各ファイルはトランザクションで囲まれるので、失敗したマイグレーションは全体が巻き戻り、
+  適用済みとしては記録されません。
+- 新しいマイグレーションを追加するときは、`NNNN_name.up.sql` / `.down.sql` を連番で置くだけです
+  （docker-compose.yml への追記は不要になりました）。
+- ロールバックは自動では行いません。`.down.sql` を psql で流してから
+  `applied_migrations` の該当行を削除してください。
 
 ```sh
-psql "$DATABASE_URL" -f migrations/0004_manga_volume_progress.up.sql
+psql "$DATABASE_URL" -f migrations/0004_manga_volume_progress.down.sql
+psql "$DATABASE_URL" -c "DELETE FROM applied_migrations WHERE version = 4"
 ```
 
-新しいマイグレーションを追加したら、docker-compose.yml の postgres の volumes にも追記します。
+### 既存のローカル DB について
+
+このランナーを入れる前は `docker-entrypoint-initdb.d` で初回起動時に流していました。
+既存の `pgdata` ボリュームには 0001〜0004 が適用済みで `applied_migrations` が無いため、
+初回起動時に `records` テーブルの存在を検出して 0001〜0004 を「適用済み」として記録し、
+0005 以降だけを流します（再適用によるデータ消失を避けるため）。
 
 ## API
 
