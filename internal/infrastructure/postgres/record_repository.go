@@ -10,11 +10,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/airing"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
 )
 
-// RecordRepository は records テーブルへのアクセスを提供する。全操作はユーザーIDでスコープされる。
-// usecase/record.Repository interface の実装。
+// RecordRepository は records テーブルへのアクセスを提供する。利用者からの操作は全て
+// ユーザーIDでスコープされる（定期ジョブ向けの airing.Repository だけが例外で、
+// 保守のために全ユーザーのレコードを横断する）。
+// usecase/record.Repository と usecase/airing.Repository interface の実装。
 type RecordRepository struct {
 	pool *pgxpool.Pool
 }
@@ -23,7 +26,10 @@ func NewRecordRepository(pool *pgxpool.Pool) *RecordRepository {
 	return &RecordRepository{pool: pool}
 }
 
-var _ record.Repository = (*RecordRepository)(nil)
+var (
+	_ record.Repository = (*RecordRepository)(nil)
+	_ airing.Repository = (*RecordRepository)(nil)
+)
 
 const recordColumns = `
 	id, anilist_id, media_type, title, cover_image_url, genres,
@@ -149,4 +155,69 @@ func (r *RecordRepository) Delete(ctx context.Context, userID, id int64) error {
 		return record.ErrNotFound
 	}
 	return nil
+}
+
+// StaleAiringAnimeIDs は next_airing_at が過去の日時のまま残っているアニメの AniList ID を、
+// 古い順に最大 limit 件返す。定期ジョブ（usecase/airing）が AniList から引き直す対象を選ぶために使う。
+//
+// 同じ作品を複数の利用者が登録していても AniList への問い合わせは1回で足りるので、
+// anilist_id で重複を除く。並び順は「最も長く腐っているものから」。
+func (r *RecordRepository) StaleAiringAnimeIDs(ctx context.Context, limit int) ([]int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT anilist_id FROM records
+		WHERE media_type = 'anime'
+		  AND next_airing_at IS NOT NULL
+		  AND next_airing_at <= now()
+		GROUP BY anilist_id
+		ORDER BY min(next_airing_at) ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query stale airing anime ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan anilist id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// UpdateNextAiringAt は AniList ID が一致するアニメレコードの next_airing_at を、
+// 全ユーザーぶんまとめて書き換える。戻り値は実際に値が変わった行数。
+//
+// updated_at は触らない。これは利用者の操作ではなく裏での同期なので、更新すると
+// ライブラリの「最近更新した順」（domain.SortUpdated）が定期ジョブで塗り替わってしまう。
+// 同じ理由で、値が変わらない行は WHERE で弾いて空更新を避ける。
+func (r *RecordRepository) UpdateNextAiringAt(ctx context.Context, updates []airing.NextAiring) (int64, error) {
+	if len(updates) == 0 {
+		return 0, nil
+	}
+
+	ids := make([]int64, len(updates))
+	times := make([]*time.Time, len(updates))
+	for i, u := range updates {
+		ids[i] = u.AniListID
+		times[i] = u.At
+	}
+
+	// 1作品ずつ UPDATE を投げると往復が件数ぶん増えるので、配列を渡して1文にまとめる。
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE records AS r SET next_airing_at = v.next_airing_at
+		FROM (
+			SELECT unnest($1::bigint[]) AS anilist_id, unnest($2::timestamptz[]) AS next_airing_at
+		) AS v
+		WHERE r.media_type = 'anime'
+		  AND r.anilist_id = v.anilist_id
+		  AND r.next_airing_at IS DISTINCT FROM v.next_airing_at
+	`, ids, times)
+	if err != nil {
+		return 0, fmt.Errorf("update next airing at: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
