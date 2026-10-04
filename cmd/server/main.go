@@ -17,6 +17,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
 	"github.com/hatodayo30/anime-manga-tracker/internal/scheduler"
 	"github.com/hatodayo30/anime-manga-tracker/internal/translate"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/airing"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
@@ -68,6 +69,7 @@ func run() error {
 	searchHandler := handler.NewSearchHandler(searchUsecase)
 	homeUsecase := home.NewUsecase(anilistClient, jikanClient)
 	homeHandler := handler.NewHomeHandler(homeUsecase)
+	airingUsecase := airing.NewUsecase(recordRepo, anilistClient)
 
 	translateClient := translate.NewClient()
 	translateUsecase := translateusecase.NewUsecase(translateClient)
@@ -86,13 +88,22 @@ func run() error {
 		WebDir:      "frontend/dist",
 	})
 
-	// ホーム画面向けキャッシュを起動時に温め、以後も定期的に取り直す。利用者が冷えたキャッシュや
-	// TTL切れを踏んで、外部APIの数秒の待ち時間を肩代わりするのを防ぐ。
-	waitJobs := scheduler.New(scheduler.Job{
-		Name:     "home-cache-warm",
-		Interval: home.WarmInterval,
-		Run:      homeUsecase.Warm,
-	}).Start(ctx)
+	waitJobs := scheduler.New(
+		// ホーム画面向けキャッシュを起動時に温め、以後も定期的に取り直す。利用者が冷えたキャッシュや
+		// TTL切れを踏んで、外部APIの数秒の待ち時間を肩代わりするのを防ぐ。
+		scheduler.Job{
+			Name:     "home-cache-warm",
+			Interval: home.WarmInterval,
+			Run:      homeUsecase.Warm,
+		},
+		// ライブラリに保存済みのアニメの次話放送日時を AniList から引き直す。放送が1話進むと
+		// 保存済みの値は過去の日時のまま固定されるため、これが無いと「次話」表示と既定ソートが狂う。
+		scheduler.Job{
+			Name:     "next-airing-sync",
+			Interval: airing.SyncInterval,
+			Run:      airingUsecase.Sync,
+		},
+	).Start(ctx)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

@@ -35,9 +35,10 @@ Go (Echo) のシングルバイナリが API と React 製フロントエンド�
 cmd/server/          エントリポイント（DI と HTTP サーバーの起動）
 internal/
   domain/            ドメインモデル（Record, User, Status, MediaType, SortKey）
-  usecase/           ユースケース層（auth / record / search / home / translate / cache）
+  usecase/           ユースケース層（auth / record / search / home / translate / cache / airing）
   handler/           HTTP ハンドラとルーティング、静的ファイル配信
   middleware/        セッション Cookie による認証ミドルウェア
+  scheduler/         プロセス内の定期ジョブ（ホームキャッシュの温め直し、次話放送日時の更新）
   infrastructure/postgres/  リポジトリ実装（pgx）
   anilist/ jikan/ translate/  外部 API クライアント
 migrations/          SQL マイグレーション（up / down）と embed 用パッケージ
