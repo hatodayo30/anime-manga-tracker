@@ -7,7 +7,7 @@
 構成図は **[`diagrams/aws-architecture.drawio`](diagrams/aws-architecture.drawio)** の
 **Phase 2** ページ（開き方は [`diagrams/README.md`](diagrams/README.md)）。
 
-最終更新: 2026-10-12
+最終更新: 2026-10-13
 
 ---
 
@@ -21,6 +21,7 @@
 | 暗号化 | なし（平文 HTTP） | ALB で TLS 終端 |
 | タスク SG のインバウンド | 自分の IP → 8080 | **ALB SG → 8080 のみ** |
 | `COOKIE_SECURE` | `false` | **`true`** |
+| `TRUST_PROXY` | `false` | **`true`** |
 | 追加リソース | — | ACM 証明書 / ALB / ターゲットグループ / Route 53 ホストゾーン |
 | 月額 | $20 前後 | **$38〜40 前後** |
 
@@ -44,7 +45,7 @@
 | 6 | Route 53 の A レコード（Alias） | 動作確認 |
 | 7 | ECS サービスに TG を紐付け | 動作確認 |
 | 8 | タスク SG を ALB からのみに変更 | — |
-| 9 | `COOKIE_SECURE=true` | — |
+| 9 | `COOKIE_SECURE=true` + `TRUST_PROXY=true` | — |
 | 10 | 動作確認 | — |
 
 **Step 8 は Step 7 の確認が済んでから。** 先に自分の IP を塞ぐと、ALB 経由が繋がらなかったときに
@@ -404,15 +405,33 @@ aws ec2 revoke-security-group-ingress \
 
 ---
 
-## Step 9: COOKIE_SECURE を true にする
+## Step 9: COOKIE_SECURE と TRUST_PROXY を true にする
 
-HTTPS になったので、セッション Cookie に `Secure` 属性を立てる。これをやらないと、
-Cookie が平文 HTTP でも送られる状態のままで、HTTPS 化の効果が半減する。
+**2 つとも同じタイミングで切り替える。** どちらも「ALB が前に入った」ことで正解が変わる設定で、
+Step 8 で SG を ALB からのみに閉じた今がその境目にあたる。
+
+| 変数 | なぜ切り替えるか | 忘れると |
+| --- | --- | --- |
+| `COOKIE_SECURE` | HTTPS になったので Cookie に `Secure` を立てる | Cookie が平文 HTTP でも送られる状態のまま。HTTPS 化の効果が半減する |
+| `TRUST_PROXY` | クライアント IP を `X-Forwarded-For` から取る | **全利用者が 1 つのレート制限バケットを共有し、数人が普通に使っただけで 429 になる** |
+
+`TRUST_PROXY` のほうは**サイトが使えなくなる**ので、取りこぼすと痛い。理屈はこう:
+
+- Step 8 でタスク SG を ALB SG からのみに閉じたため、`RemoteAddr` は**常に ALB** になった
+- `TRUST_PROXY=false` のままだと、レート制限のキーが全員 ALB の IP になる
+- 逆に Phase 1 で `true` にすると、クライアントが `X-Forwarded-For` を自分で書くだけで
+  レート制限を回避できてしまう。**どちらの値も、前段の構成と対でしか正しくない**
+
+詳細は `internal/config/config.go` の `TrustProxy` と `internal/handler/router.go` の
+`IPExtractor` のコメントにある。
 
 ```bash
-# タスク定義の COOKIE_SECURE を false -> true に
+# タスク定義の COOKIE_SECURE と TRUST_PROXY を false -> true に
 sed -i '' 's/{ "name": "COOKIE_SECURE", "value": "false" }/{ "name": "COOKIE_SECURE", "value": "true" }/' /tmp/amt-taskdef.json
-grep COOKIE_SECURE /tmp/amt-taskdef.json   # true になっているか確認
+sed -i '' 's/{ "name": "TRUST_PROXY", "value": "false" }/{ "name": "TRUST_PROXY", "value": "true" }/' /tmp/amt-taskdef.json
+
+# 2 つとも true になっているか確認（TRUST_PROXY が無ければ environment に足す）
+grep -E 'COOKIE_SECURE|TRUST_PROXY' /tmp/amt-taskdef.json
 
 aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
 
@@ -479,7 +498,40 @@ curl --max-time 5 http://${PUBLIC_IP}:8080/healthz
 4. ホーム画面に今季アニメ・話題の漫画が出る（外向き通信が生きている）
 5. 検索 → ライブラリに追加（DB 書き込み）
 
-### 10-4. ターゲットとログ
+### 10-4. レート制限が IP ごとに効いているか（TRUST_PROXY の検証）
+
+**ここを飛ばさないこと。** `TRUST_PROXY` を取りこぼしていると、全利用者が ALB の IP で
+1 つのバケットを共有する。自分 1 人で触っている間は気付けず、人が増えてから 429 で露見する。
+
+```bash
+# 未認証 API を 40 回連続で叩く（バースト 30 / 毎秒 2 本なので途中で 429 に入る）
+for i in $(seq 1 40); do
+  curl -s -o /dev/null -w '%{http_code} ' "https://${DOMAIN}/api/home/trending"
+done; echo
+# 200 が 30 強、そのあと 429 が混じる ← バケットが効いている
+```
+
+**判定はここから。** 上で 429 を出したすぐあとに、**別の回線**（スマホのモバイル通信、
+テザリングを切った状態）から 1 本だけ叩く。
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' "https://${DOMAIN}/api/home/trending"
+```
+
+| 結果 | 意味 |
+| --- | --- |
+| `200` | **正しい。** IP ごとに別バケットになっている |
+| `429` | **設定ミス。** 全員が同じバケットを共有している |
+
+`429` が返ったら `TRUST_PROXY` がタスク定義に入っていないか `false` のまま。
+Step 9 に戻り、タスク定義の `environment` を確認する。
+
+```bash
+aws ecs describe-task-definition --task-definition anime-manga-tracker \
+  --query 'taskDefinition.containerDefinitions[0].environment' --output table
+```
+
+### 10-5. ターゲットとログ
 
 ```bash
 aws elbv2 describe-target-health --target-group-arn $TG_ARN \
@@ -488,6 +540,10 @@ aws elbv2 describe-target-health --target-group-arn $TG_ARN \
 
 aws logs tail /ecs/anime-manga-tracker --since 10m
 ```
+
+**ついでに `DATABASE_URL` がログに出ていないか確認する**（BACKLOG 4-d）。タスク定義を触った
+今が一番やりやすい。わざと壊した値で 1 回だけ起動し、CloudWatch に接続文字列が出ないか見る。
+pgx のパースエラーに接続文字列が含まれるケースがあるため。確認したらすぐ元に戻すこと。
 
 > ヘルスチェックはアプリのログには出ない（このアプリはリクエストログのミドルウェアを
 > 入れていないため）。30 秒ごとのアクセスでログが溢れる心配はない。
@@ -606,6 +662,7 @@ aws ecs describe-services --cluster amt-cluster --services amt-service --query '
 | ターゲットグループに ECS が登録できない | ターゲットタイプを `インスタンス` で作った | **TG を作り直す**（Fargate は IP のみ） |
 | ALB が作れない（サブネットのエラー） | AZ が 1 つしか選ばれていない | パブリックサブネットを 2 つとも選ぶ |
 | ログインできない / ログイン状態が保持されない | `COOKIE_SECURE` と古い Cookie の食い違い | ブラウザの Cookie を消す。シークレットウィンドウで確認 |
+| 普通に使っているだけで 429 が出る / 別回線からでも 429 | `TRUST_PROXY` が `false` のまま。全員が ALB の IP で 1 つのバケットを共有している | Step 9 に戻り、タスク定義の `environment` に `TRUST_PROXY=true` があるか確認 |
 | デプロイのたびに 5 分かかる | `deregistration_delay` が既定の 300 秒 | Step 4-1 |
 | デプロイ中に 503 が出る | 仕様（単一タスク制約） | 上の「デプロイ」を参照。直すなら ElastiCache が先 |
 | 15 日後に突然繋がらなくなった | 登録者メールの検証をしていない | Step 1-1。Route 53 → ドメインでステータスを確認 |
