@@ -23,7 +23,7 @@
 | `COOKIE_SECURE` | `false` | **`true`** |
 | `TRUST_PROXY` | `false` | **`true`** |
 | 追加リソース | — | ACM 証明書 / ALB / ターゲットグループ / Route 53 ホストゾーン |
-| 月額 | $20 前後 | **$38〜40 前後** |
+| 月額 | $20 前後 | **$45〜50 前後** |
 
 **変えないもの**（Phase 1 の判断を引き継ぐ）:
 
@@ -43,13 +43,18 @@
 | 4 | ターゲットグループ `amt-tg` | ALB・ECS サービス |
 | 5 | ALB + リスナー（443 / 80 リダイレクト） | Route 53 レコード |
 | 6 | Route 53 の A レコード（Alias） | 動作確認 |
-| 7 | ECS サービスに TG を紐付け | 動作確認 |
-| 8 | タスク SG を ALB からのみに変更 | — |
-| 9 | `COOKIE_SECURE=true` + `TRUST_PROXY=true` | — |
-| 10 | 動作確認 | — |
+| 7 | タスク SG に ALB SG からの 8080 を許可 | ヘルスチェックの疎通 |
+| 8 | ECS サービスに TG を紐付け | 動作確認 |
+| 9 | タスク SG から自分の IP のルールを削除 | — |
+| 10 | `COOKIE_SECURE=true` + `TRUST_PROXY=true` | — |
+| 11 | 動作確認 | — |
 
-**Step 8 は Step 7 の確認が済んでから。** 先に自分の IP を塞ぐと、ALB 経由が繋がらなかったときに
-確認する手段が無くなる。
+**順番が大事。** ALB のヘルスチェックもタスク SG を通るので、**Step 7 を先にやらないと
+Step 8 のヘルスチェックが一度も届かない**。120 秒の猶予が切れるとタスクが置換され、
+数回の失敗でデプロイが FAILED になる。
+
+逆に **Step 9（自分の IP のルール削除）は Step 8 の確認が済んでから**。先に塞ぐと、
+ALB 経由が繋がらなかったときに確認する手段が無くなる。
 
 ### 所要時間とお金
 
@@ -58,15 +63,20 @@
 
 | 項目 | 金額 | 備考 |
 | --- | --- | --- |
-| ALB | **月 $18 前後** | + LCU 従量課金。この規模ではほぼゼロ |
+| ALB | **月 $16.5 前後** | $0.0225/時 × 730。+ LCU 従量課金だがこの規模ではほぼゼロ |
+| **パブリック IPv4（ALB ぶん）** | **月 $7.3** | $0.005/時 × 730 × 2。**ALB は AZ ごとに 1 つ IP を持つ** |
 | Route 53 ホストゾーン | **月 $0.50** | ドメイン購入時に自動で 1 つ作られる |
 | ドメイン登録 | **年 $14 前後**（.com） | TLD による。**返金されない** |
 | ACM 証明書 | **無料** | ALB で使う限り |
 
-Phase 1 の $20 と合わせて **月 $38〜40 前後**。
+Phase 1 の $20 と合わせて **月 $45〜50 前後**。
+
+> **パブリック IPv4 は 2024 年から課金対象。** 見落としやすい。この構成では ALB に 2 つ、
+> タスクに 1 つで合計 3 つ（月 $11 前後）。うちタスクの 1 つは Phase 1 から発生している。
 
 > **ALB は「停止」できない。** RDS や ECS タスクと違い、使わない間だけ止める方法が無い。
-> 放置すると月 $18 が積み上がる。長期間触らないなら ALB ごと削除すること（「運用」に手順）。
+> 放置すると**月 $24 前後**（ALB 本体 + パブリック IPv4 2 つ）が積み上がる。
+> 長期間触らないなら ALB ごと削除すること（「運用」に手順）。
 
 ### 作業中ずっと使う環境変数
 
@@ -333,12 +343,31 @@ dig +short $DOMAIN
 
 ---
 
-## Step 7: ECS サービスをターゲットグループに紐付ける
+## Step 7: タスク SG に ALB SG からの 8080 を許可する
+
+**ターゲットグループを紐付ける前にここを開ける。** ALB のヘルスチェックもタスク SG を通るので、
+先に紐付けるとヘルスチェックが一度も届かない。
+
+```bash
+aws ec2 authorize-security-group-ingress \
+  --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG
+```
+
+> **これで公開範囲は広がらない。** Step 8 までターゲットグループは空なので、ALB には
+> 転送先が無い。外から実際に届くようになるのは Step 8 の瞬間で、それは順番を変えても同じ。
+>
+> **自分の IP のルールはまだ消さない。** ALB 経由が繋がらなかったときの確認手段として残す。
+> 消すのは Step 9。
+
+---
+
+## Step 8: ECS サービスをターゲットグループに紐付ける
 
 ```bash
 aws ecs update-service \
   --cluster amt-cluster \
   --service amt-service \
+  --desired-count 1 \
   --load-balancers targetGroupArn=$TG_ARN,containerName=app,containerPort=8080 \
   --health-check-grace-period-seconds 120
 
@@ -346,16 +375,18 @@ aws ecs wait services-stable --cluster amt-cluster --services amt-service
 ```
 
 - **`containerName` はタスク定義のコンテナ名** (`app`)。違うと紐付けに失敗する
+- **`--desired-count 1` を明示する。** [Phase 1 の「費用を止める」](DEPLOY-AWS.md#費用を止めるしばらく触らないとき)で
+  0 にしたまま来ると、タスクが無いまま `wait services-stable` が即座に成功し、
+  「安定したのにブラウザは 503」という分かりにくい状態になる
 - **`--health-check-grace-period-seconds 120` は必須級。**
   これが無いと、タスク起動直後（マイグレーション適用中でまだ listen していない時間）に
-  ALB のヘルスチェックが落ちて ECS がタスクを殺し、**起動と停止を延々繰り返すループ**になる。
-  猶予時間の間はヘルスチェックの失敗を無視する
+  ALB のヘルスチェックが落ちて ECS がタスクを殺す。猶予時間の間は失敗を無視する
 
 > ローリング更新（ECS デプロイコントローラ）のサービスなら、ロードバランサー構成は
 > **後から変更できる**。もしこのコマンドが拒否された場合は、サービスを作り直す
 > （[付録 A](#付録-a-サービスを作り直す場合)）。
 
-### 7-1. ターゲットが healthy になるのを確認する
+### 8-1. ターゲットが healthy になるのを確認する
 
 ```bash
 aws elbv2 describe-target-health --target-group-arn $TG_ARN \
@@ -365,27 +396,21 @@ aws elbv2 describe-target-health --target-group-arn $TG_ARN \
 
 `State` が `healthy` になるまで 1〜2 分。`unhealthy` のままなら「つまずきポイント」へ。
 
-**この時点ではまだ繋がらない。** タスク SG が ALB からの 8080 を許可していないため。次の Step で開ける。
+healthy になったら、**ブラウザで `https://<ドメイン>` を開いて表示されることを確認する。**
+ここまでで ALB 経由の経路が通る。
+
+> **ここで `unhealthy` が続く場合、放置しないこと。** 120 秒の猶予が切れるとタスクが
+> 置換され、数回の失敗でデプロイが FAILED になる。`deploymentCircuitBreaker` が付いているので
+> 無限ループにはならないが、**ロールバックしてもロードバランサー構成は外れない**ため、
+> 原因を直すまで healthy なターゲットは 0 のままになる。まず Step 7 を実行したか確認する。
 
 ---
 
-## Step 8: タスク SG のインバウンドを ALB からのみにする
+## Step 9: タスク SG から自分の IP のルールを消す
 
-**順番が大事。** 先に ALB からの許可を足し、ALB 経由で繋がることを確認してから、自分の IP を消す。
+**Step 8-1 でブラウザ表示まで確認してから。** これで経路が ALB 経由だけになる。
 
-### 8-1. ALB SG からの 8080 を許可する
-
-```bash
-aws ec2 authorize-security-group-ingress \
-  --group-id $TASK_SG --protocol tcp --port 8080 --source-group $ALB_SG
-```
-
-1〜2 分待ってターゲットが `healthy` になったら、**ブラウザで `https://<ドメイン>` を開いて
-表示されることを確認する**。
-
-### 8-2. 自分の IP のルールを消す
-
-繋がることを確認してから。いま入っているルールを見る:
+いま入っているルールを見る:
 
 ```bash
 aws ec2 describe-security-groups --group-ids $TASK_SG \
@@ -405,10 +430,10 @@ aws ec2 revoke-security-group-ingress \
 
 ---
 
-## Step 9: COOKIE_SECURE と TRUST_PROXY を true にする
+## Step 10: COOKIE_SECURE と TRUST_PROXY を true にする
 
 **2 つとも同じタイミングで切り替える。** どちらも「ALB が前に入った」ことで正解が変わる設定で、
-Step 8 で SG を ALB からのみに閉じた今がその境目にあたる。
+Step 9 で SG を ALB からのみに閉じた今がその境目にあたる。
 
 | 変数 | なぜ切り替えるか | 忘れると |
 | --- | --- | --- |
@@ -417,7 +442,7 @@ Step 8 で SG を ALB からのみに閉じた今がその境目にあたる。
 
 `TRUST_PROXY` のほうは**サイトが使えなくなる**ので、取りこぼすと痛い。理屈はこう:
 
-- Step 8 でタスク SG を ALB SG からのみに閉じたため、`RemoteAddr` は**常に ALB** になった
+- Step 9 でタスク SG を ALB SG からのみに閉じたため、`RemoteAddr` は**常に ALB** になった
 - `TRUST_PROXY=false` のままだと、レート制限のキーが全員 ALB の IP になる
 - 逆に Phase 1 で `true` にすると、クライアントが `X-Forwarded-For` を自分で書くだけで
   レート制限を回避できてしまう。**どちらの値も、前段の構成と対でしか正しくない**
@@ -425,13 +450,25 @@ Step 8 で SG を ALB からのみに閉じた今がその境目にあたる。
 詳細は `internal/config/config.go` の `TrustProxy` と `internal/handler/router.go` の
 `IPExtractor` のコメントにある。
 
-```bash
-# タスク定義の COOKIE_SECURE と TRUST_PROXY を false -> true に
-sed -i '' 's/{ "name": "COOKIE_SECURE", "value": "false" }/{ "name": "COOKIE_SECURE", "value": "true" }/' /tmp/amt-taskdef.json
-sed -i '' 's/{ "name": "TRUST_PROXY", "value": "false" }/{ "name": "TRUST_PROXY", "value": "true" }/' /tmp/amt-taskdef.json
+### 10-1. タスク定義を書き換えて登録する
 
-# 2 つとも true になっているか確認（TRUST_PROXY が無ければ environment に足す）
-grep -E 'COOKIE_SECURE|TRUST_PROXY' /tmp/amt-taskdef.json
+**`sed` で置換してはいけない。** Phase 1 のタスク定義に `TRUST_PROXY` は存在せず、
+`sed` は置換対象が無くても終了コード 0 で成功するため、**黙って何も変えずに通る**。
+`jq` で「既にあるものを除いてから足す」形にすれば、有無にかかわらず冪等に効く。
+
+```bash
+aws ecs describe-task-definition --task-definition anime-manga-tracker \
+  --query 'taskDefinition' --output json \
+  | jq '
+      del(.taskDefinitionArn,.revision,.status,.requiresAttributes,
+          .compatibilities,.registeredAt,.registeredBy,.deregisteredAt)
+      | .containerDefinitions[0].environment |=
+          ( map(select(.name != "COOKIE_SECURE" and .name != "TRUST_PROXY"))
+            + [{name:"COOKIE_SECURE",value:"true"},{name:"TRUST_PROXY",value:"true"}] )
+    ' > /tmp/amt-taskdef.json
+
+# 2 つとも true で、重複していないことを確認してから登録する
+jq '.containerDefinitions[0].environment' /tmp/amt-taskdef.json
 
 aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
 
@@ -440,14 +477,8 @@ aws ecs update-service --cluster amt-cluster --service amt-service \
 aws ecs wait services-stable --cluster amt-cluster --services amt-service
 ```
 
-> `/tmp/amt-taskdef.json` が残っていない場合は、現在のタスク定義を落として編集する:
->
-> ```bash
-> aws ecs describe-task-definition --task-definition anime-manga-tracker \
->   --query 'taskDefinition' --output json \
->   | jq 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)' \
->   > /tmp/amt-taskdef.json
-> ```
+> `register-task-definition` が知らないフィールドで弾いたら、そのキーを `del(...)` に足す。
+> API にフィールドが増えても同じ直し方で通る。
 
 > **切り替え後、一度ログインし直すことになる。**
 > `internal/handler/auth_handler.go` のコメントにあるとおり、ブラウザは `Secure` 属性が
@@ -456,9 +487,9 @@ aws ecs wait services-stable --cluster amt-cluster --services amt-service
 
 ---
 
-## Step 10: 動作確認
+## Step 11: 動作確認
 
-### 10-1. リダイレクトと証明書
+### 11-1. リダイレクトと証明書
 
 ```bash
 # HTTP -> HTTPS の 301
@@ -475,7 +506,7 @@ echo | openssl s_client -connect ${DOMAIN}:443 -servername ${DOMAIN} 2>/dev/null
   | openssl x509 -noout -subject -issuer -dates
 ```
 
-### 10-2. 旧経路が塞がったことの確認
+### 11-2. 旧経路が塞がったことの確認
 
 ```bash
 # タスクのパブリック IP を取る
@@ -490,7 +521,7 @@ curl --max-time 5 http://${PUBLIC_IP}:8080/healthz
 # curl: (28) Connection timed out  ← これが正しい
 ```
 
-### 10-3. ブラウザで
+### 11-3. ブラウザで
 
 1. `https://<ドメイン>` を開く → **鍵マークが出る**
 2. **Cookie を一度消してから**サインアップ / ログイン
@@ -498,7 +529,7 @@ curl --max-time 5 http://${PUBLIC_IP}:8080/healthz
 4. ホーム画面に今季アニメ・話題の漫画が出る（外向き通信が生きている）
 5. 検索 → ライブラリに追加（DB 書き込み）
 
-### 10-4. レート制限が IP ごとに効いているか（TRUST_PROXY の検証）
+### 11-4. レート制限が IP ごとに効いているか（TRUST_PROXY の検証）
 
 **ここを飛ばさないこと。** `TRUST_PROXY` を取りこぼしていると、全利用者が ALB の IP で
 1 つのバケットを共有する。自分 1 人で触っている間は気付けず、人が増えてから 429 で露見する。
@@ -511,8 +542,10 @@ done; echo
 # 200 が 30 強、そのあと 429 が混じる ← バケットが効いている
 ```
 
-**判定はここから。** 上で 429 を出したすぐあとに、**別の回線**（スマホのモバイル通信、
-テザリングを切った状態）から 1 本だけ叩く。
+**判定はここから。2 つとも確認する。**
+
+**(1) 別の IP なら別のバケットか。** 上で 429 を出したすぐあとに、**別の回線**
+（スマホのモバイル通信、テザリングを切った状態）から 1 本だけ叩く。
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' "https://${DOMAIN}/api/home/trending"
@@ -523,15 +556,32 @@ curl -s -o /dev/null -w '%{http_code}\n' "https://${DOMAIN}/api/home/trending"
 | `200` | **正しい。** IP ごとに別バケットになっている |
 | `429` | **設定ミス。** 全員が同じバケットを共有している |
 
-`429` が返ったら `TRUST_PROXY` がタスク定義に入っていないか `false` のまま。
-Step 9 に戻り、タスク定義の `environment` を確認する。
+**(2) XFF を偽装してもバケットが変わらないか。** `internal/handler/router.go` の
+`IPExtractor` のコメントが「ALB を入れたら一度確認すること」と明記している項目。
+429 が出ている状態のまま、ヘッダを足して 1 本叩く。
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H 'X-Forwarded-For: 1.2.3.4' "https://${DOMAIN}/api/home/trending"
+```
+
+| 結果 | 意味 |
+| --- | --- |
+| `429` | **正しい。** 偽装した値では別バケットにならない |
+| `200` | **危険。** ALB の XFF 処理が既定の append になっていない。ヘッダを書き換えるだけでレート制限を回避できる状態 |
+
+> `echo.ExtractIPFromXFFHeader()` は XFF を**右から左へ**辿り、最初に「信頼しない」IP を返す。
+> ALB の `10.0.x.x` は既定の信頼範囲（RFC1918）なので飛ばされ、次に当たるのが ALB が追記した
+> 本物の接続元になる。クライアントが自分で書いた値は必ずそれより左にあるので届かない。
+
+`429` が返らなかった場合、あるいは (1) で `429` が返った場合は、タスク定義を確認する。
 
 ```bash
 aws ecs describe-task-definition --task-definition anime-manga-tracker \
   --query 'taskDefinition.containerDefinitions[0].environment' --output table
 ```
 
-### 10-5. ターゲットとログ
+### 11-5. ターゲットとログ
 
 ```bash
 aws elbv2 describe-target-health --target-group-arn $TG_ARN \
@@ -541,14 +591,17 @@ aws elbv2 describe-target-health --target-group-arn $TG_ARN \
 aws logs tail /ecs/anime-manga-tracker --since 10m
 ```
 
-**ついでに `DATABASE_URL` がログに出ていないか確認する**（BACKLOG 4-d）。タスク定義を触った
-今が一番やりやすい。わざと壊した値で 1 回だけ起動し、CloudWatch に接続文字列が出ないか見る。
-pgx のパースエラーに接続文字列が含まれるケースがあるため。確認したらすぐ元に戻すこと。
-
 > ヘルスチェックはアプリのログには出ない（このアプリはリクエストログのミドルウェアを
 > 入れていないため）。30 秒ごとのアクセスでログが溢れる心配はない。
 
+> **`DATABASE_URL` がログに出ないかの確認（BACKLOG 4-d）は、ここではやらない。**
+> コードを読んで決着済み。`pgxpool.New` のパースエラーは pgx の `ParseConfigError` で、
+> `Error()` が `redactPW()` を通すため**パスワードは `xxxxx` に置き換わる**
+> （ホスト名・ユーザー名・DB 名は残る）。`pool.Ping` 側の失敗は接続文字列を持たない。
+> わざと壊す検証は SSM の値を書き換える事故リスクに見合わない。
+
 ---
+
 
 ## 運用（Phase 1 からの差分）
 
@@ -574,8 +627,8 @@ aws ecs update-service --cluster amt-cluster --service amt-service --desired-cou
 aws rds stop-db-instance --db-instance-identifier amt-db
 ```
 
-> **これでは ALB の月 $18 は止まらない。** ALB に停止の概念は無く、存在するだけで課金される。
-> 数週間以上触らないなら ALB ごと削除する:
+> **これでは ALB の月 $24 前後は止まらない。** ALB に停止の概念は無く、存在するだけで
+> 課金される（本体 $16.5 + パブリック IPv4 2 つ $7.3）。数週間以上触らないなら ALB ごと削除する:
 >
 > ```bash
 > aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN
@@ -583,7 +636,8 @@ aws rds stop-db-instance --db-instance-identifier amt-db
 > ```
 >
 > ターゲットグループ・証明書・ホストゾーンは残しておいてよい（TG と ACM は無料、
-> ホストゾーンは月 $0.50）。ALB を作り直したら Step 5-1・6・7 をやり直す。
+> ホストゾーンは月 $0.50）。ALB を作り直したら Step 5-1・6・8 をやり直す
+> （Step 7 のタスク SG のルールは ALB SG を参照しているので、SG を消していなければ残る）。
 
 ### ドメインを手放す
 
@@ -608,30 +662,45 @@ aws route53domains get-domain-detail --domain-name $DOMAIN --region us-east-1 \
 Phase 1 の「全部消す」の**前に**この順番で消す。
 
 ```bash
-# 1. ALB（リスナーも一緒に消える）
+# 1. ECS サービスを先に消す（ターゲットグループを参照しているため）
+aws ecs update-service --cluster amt-cluster --service amt-service --desired-count 0
+aws ecs delete-service --cluster amt-cluster --service amt-service --force
+aws ecs wait services-inactive --cluster amt-cluster --services amt-service
+
+# 2. ALB（リスナーも一緒に消える）
 aws elbv2 delete-load-balancer --load-balancer-arn $ALB_ARN
 sleep 30
 
-# 2. ターゲットグループ（ALB を消してから）
+# 3. ターゲットグループ（ALB を消してから）
 aws elbv2 delete-target-group --target-group-arn $TG_ARN
 
-# 3. ALB の SG（ALB が完全に消えてから。ENI が残っていると失敗する）
+# 4. ALB の SG（ALB が完全に消えてから。ENI が残っていると失敗する）
 aws ec2 delete-security-group --group-id $ALB_SG
 
-# 4. ACM 証明書（ALB に紐付いている間は消せない）
+# 5. ACM 証明書（ALB との関連付けが外れてから）
 aws acm delete-certificate --certificate-arn $CERT_ARN
 
-# 5. Route 53 のレコード（A レコードと検証用 CNAME）→ コンソールで消すのが楽
+# 6. Route 53 のレコード（A レコードと検証用 CNAME）→ コンソールで消すのが楽
 #    NS と SOA は消せない（消す必要もない）
 
-# 6. ホストゾーン（中のレコードが NS と SOA だけになってから）
+# 7. ホストゾーン（中のレコードが NS と SOA だけになってから）
 aws route53 delete-hosted-zone --id $ZONE_ID
 
-# 7. ドメインの自動更新をオフ（登録自体は期限まで残る）
+# 8. ドメインの自動更新をオフ（登録自体は期限まで残る）
 aws route53domains disable-domain-auto-renew --domain-name $DOMAIN --region us-east-1
 ```
 
+> **5 が `ResourceInUse` で失敗することがある。** ALB を消しても ACM 側の関連付けが
+> 消えるまでに時間差がある。数分待って再実行する。急がないなら 6 以降を先に進めてよい
+> （証明書は無料なので残っていても費用はかからない）。
+
+> **7 でホストゾーンを消すと、ドメイン登録の NS 委任が宙に浮く。** ドメイン自体は
+> 期限まで残るので、あとで作り直すときは**新しいホストゾーンの NS をドメイン登録側に
+> 張り直す**必要がある。ドメインを使い続けるつもりならホストゾーンは消さないほうが楽
+> （月 $0.50）。
+
 そのあと [Phase 1 の「全部消す」](DEPLOY-AWS.md#全部消す)へ。
+**ECS サービスは上の 1 で消してあるので、そこは飛ばす。**
 
 ---
 
@@ -647,22 +716,25 @@ aws ecs describe-services --cluster amt-cluster --services amt-service --query '
 
 | 症状 | 原因 | 対処 |
 | --- | --- | --- |
-| ターゲットが `unhealthy`、Reason が `Target.Timeout` | タスク SG が ALB SG からの 8080 を許可していない | Step 8-1 |
+| ターゲットが `unhealthy`、Reason が `Target.Timeout` | タスク SG が ALB SG からの 8080 を許可していない | Step 7。順番を飛ばすとここに来る |
 | ターゲットが `unhealthy`、Reason が `Target.ResponseCodeMismatch` | `/healthz` が 503 を返している（= DB に繋がっていない） | RDS の状態と `amt-rds-sg` を確認。Phase 1 の手順書へ |
-| ターゲットが `unused` のまま | ECS サービスに TG が紐付いていない | Step 7 の `update-service` が成功したか確認 |
-| タスクが起動 → 停止を繰り返す | `--health-check-grace-period-seconds` を設定していない | Step 7。起動中のタスクが unhealthy 判定で殺されている |
+| ターゲットが `unused` のまま | ECS サービスに TG が紐付いていない | Step 8 の `update-service` が成功したか確認 |
+| タスクが起動 → 停止を繰り返す | `--health-check-grace-period-seconds` を設定していない | Step 8。起動中のタスクが unhealthy 判定で殺されている |
 | ブラウザで **503 Service Temporarily Unavailable** | healthy なターゲットが 0。デプロイ中か、タスクが落ちている | `describe-target-health` と ECS のログ |
-| ブラウザで **504 Gateway Timeout** | タスクは登録されているが応答が返らない | タスク SG / コンテナのポート（8080）を確認 |
-| ブラウザで **502 Bad Gateway** | ターゲットのポートが違う（8080 以外を指している） | TG のポート設定 |
+| ブラウザで **504 Gateway Timeout** | ALB からタスクに届いていない、または応答が返らない | タスク SG（Step 7）と TG のポート設定（8080）を確認 |
+| ブラウザで **502 Bad Gateway** | タスクには届いたが、不正な応答を返したか接続を切られた | ECS のログを見る。アプリが落ちている可能性 |
 | `ERR_CERT_COMMON_NAME_INVALID` | 証明書のドメインとアクセスしたホスト名が違う | `www` で来たなら証明書に `*.example.com` が要る（Step 2） |
 | ブラウザで「安全ではありません」 | HTTP で開いている / リダイレクトが未設定 | Step 5-1 |
 | ドメインが名前解決できない | ① A レコード未作成 ② 反映待ち ③ ドメイン登録が未完了 | `dig +short $DOMAIN` / Route 53 のホストゾーンを確認 |
 | ACM が「検証保留中」のまま | 検証用 CNAME が入っていない | Step 2-1 の「Route 53 でレコードを作成」を押したか |
 | ACM の証明書が ALB の選択肢に出ない | 証明書のリージョンが違う | ACM は `ap-northeast-1` で取り直す |
+| `wait services-stable` が `Max attempts exceeded` で終わる | ヘルスチェックが通らずデプロイが収束していない | 上 3 つのコマンドで原因を見る。Step 7 を飛ばしていないか |
 | ターゲットグループに ECS が登録できない | ターゲットタイプを `インスタンス` で作った | **TG を作り直す**（Fargate は IP のみ） |
 | ALB が作れない（サブネットのエラー） | AZ が 1 つしか選ばれていない | パブリックサブネットを 2 つとも選ぶ |
 | ログインできない / ログイン状態が保持されない | `COOKIE_SECURE` と古い Cookie の食い違い | ブラウザの Cookie を消す。シークレットウィンドウで確認 |
-| 普通に使っているだけで 429 が出る / 別回線からでも 429 | `TRUST_PROXY` が `false` のまま。全員が ALB の IP で 1 つのバケットを共有している | Step 9 に戻り、タスク定義の `environment` に `TRUST_PROXY=true` があるか確認 |
+| **RDS を止めている間、タスクが起動と停止を繰り返す** | `/healthz` が DB の `Ping` まで見て 503 を返し、ALB が unhealthy と判定して ECS がタスクを置換する。**Phase 2 で新しく出る挙動**（Phase 1 ではタスクは落ちずに 503 を返すだけだった） | RDS を起動する。止めておくなら ECS も `--desired-count 0` にしておく（「費用を止める」の順番どおりにやれば踏まない） |
+| 普通に使っているだけで 429 が出る / 別回線からでも 429 | `TRUST_PROXY` が `false` のまま。全員が ALB の IP で 1 つのバケットを共有している | Step 10 に戻り、タスク定義の `environment` に `TRUST_PROXY=true` があるか確認 |
+| XFF を偽装すると 429 を回避できる | ALB の XFF 処理が既定の append になっていない | Step 11-4 の (2)。ALB の属性 `routing.http.xff_header_processing.mode` を確認 |
 | デプロイのたびに 5 分かかる | `deregistration_delay` が既定の 300 秒 | Step 4-1 |
 | デプロイ中に 503 が出る | 仕様（単一タスク制約） | 上の「デプロイ」を参照。直すなら ElastiCache が先 |
 | 15 日後に突然繋がらなくなった | 登録者メールの検証をしていない | Step 1-1。Route 53 → ドメインでステータスを確認 |
@@ -671,7 +743,7 @@ aws ecs describe-services --cluster amt-cluster --services amt-service --query '
 
 ## 付録 A: サービスを作り直す場合
 
-Step 7 の `update-service --load-balancers` が拒否された場合のみ。
+Step 8 の `update-service --load-balancers` が拒否された場合のみ。
 
 ```bash
 aws ecs update-service --cluster amt-cluster --service amt-service --desired-count 0
@@ -710,3 +782,12 @@ Terraform だと `aws_lb` / `aws_lb_target_group` / `aws_lb_listener` / `aws_acm
 CI/CD を繋ぐのもこのタイミング。GitHub Actions から **OIDC で AssumeRole** し、
 `ecr push` → `register-task-definition` → `update-service` を回す。
 `.github/workflows/ci.yml` は現在 build までで、デプロイは未接続。
+
+### HSTS を入れるか決める
+
+`internal/handler/router.go` の `middleware.Secure()` は既定設定のままで、**HSTS を意図的に
+出していない**。理由はコメントにあるとおり「`max-age` はブラウザに残り続けて取り消しが効かない」
+ため。HTTPS での運用が固まったこの段階が、入れるかを判断するタイミングになる。
+
+短い `max-age`（数分）から始めて、問題がなければ伸ばす。**`includeSubDomains` と `preload` は
+後戻りできないので、入れるなら最後**。ドメインを手放す予定があるなら、そもそも入れないほうがよい。
