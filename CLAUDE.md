@@ -107,6 +107,9 @@ ECS は `desiredCount: 1` 固定。この前提を崩す変更は BACKLOG で設
 
 - **main / master では編集もコミットもできない**（`.claude/hooks/block-main-branch.sh` が
   PreToolUse で弾く）。先に `git checkout -b <type>/<short-description>` すること。
+- **AWS を変更する操作と、Postgres ボリュームを消す操作はブロックされる**
+  （`.claude/hooks/block-destructive.sh`）。`aws` は `describe-*` / `list-*` / `get-*` のみ通る。
+  ECS / RDS の操作は `docs/DEPLOY-AWS.md` を見ながら人間が実行する。
 - コミットメッセージは Conventional Commits 形式（`feat:` / `fix:` / `docs:` / `chore:`）＋日本語。
 - commit・push・PR 作成は `/pr` でまとめて実行できる。
 
