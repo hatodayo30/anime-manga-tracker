@@ -30,7 +30,9 @@ func (h *HomeHandler) SeasonAnime(c echo.Context) error {
 	if seasonParam == "" && yearParam == "" {
 		results, err := h.usecase.CurrentSeasonAnime(c.Request().Context())
 		if err != nil {
-			return writeError(c, http.StatusBadGateway, "anilist request failed: "+err.Error())
+			// 詳細は外部に出さずログにだけ残す。上流の URL や内部事情がクライアントに漏れるため（BACKLOG 4-d）。
+			c.Logger().Errorf("home: current season anime: %v", err)
+			return writeError(c, http.StatusBadGateway, "anilist request failed")
 		}
 		return c.JSON(http.StatusOK, results)
 	}
@@ -45,7 +47,8 @@ func (h *HomeHandler) SeasonAnime(c echo.Context) error {
 
 	results, err := h.usecase.SeasonAnimeFor(c.Request().Context(), seasonParam, year)
 	if err != nil {
-		return writeError(c, http.StatusBadGateway, "anilist request failed: "+err.Error())
+		c.Logger().Errorf("home: season anime: %v", err)
+		return writeError(c, http.StatusBadGateway, "anilist request failed")
 	}
 	return c.JSON(http.StatusOK, results)
 }
@@ -54,7 +57,8 @@ func (h *HomeHandler) SeasonAnime(c echo.Context) error {
 func (h *HomeHandler) Trending(c echo.Context) error {
 	results, err := h.usecase.TrendingAnime(c.Request().Context())
 	if err != nil {
-		return writeError(c, http.StatusBadGateway, "anilist request failed: "+err.Error())
+		c.Logger().Errorf("home: trending anime: %v", err)
+		return writeError(c, http.StatusBadGateway, "anilist request failed")
 	}
 	return c.JSON(http.StatusOK, results)
 }
@@ -64,7 +68,8 @@ func (h *HomeHandler) Trending(c echo.Context) error {
 func (h *HomeHandler) TrendingManga(c echo.Context) error {
 	items, err := h.usecase.TrendingManga(c.Request().Context())
 	if err != nil {
-		return writeError(c, http.StatusBadGateway, "anilist request failed: "+err.Error())
+		c.Logger().Errorf("home: trending manga: %v", err)
+		return writeError(c, http.StatusBadGateway, "anilist request failed")
 	}
 	return c.JSON(http.StatusOK, items)
 }

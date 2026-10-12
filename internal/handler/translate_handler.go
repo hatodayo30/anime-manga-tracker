@@ -57,7 +57,9 @@ func (h *TranslateHandler) Translate(c echo.Context) error {
 
 	translated, err := h.usecase.Translate(c.Request().Context(), in.Text, in.Target)
 	if err != nil {
-		return writeError(c, http.StatusBadGateway, "translate failed: "+err.Error())
+		// 詳細は外部に出さずログにだけ残す。上流の URL や内部事情がクライアントに漏れるため（BACKLOG 4-d）。
+		c.Logger().Errorf("translate: %v", err)
+		return writeError(c, http.StatusBadGateway, "translate failed")
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"translated": translated})

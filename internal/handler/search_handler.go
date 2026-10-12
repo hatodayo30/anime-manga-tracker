@@ -59,7 +59,9 @@ func (h *SearchHandler) Search(c echo.Context) error {
 
 	results, err := h.usecase.Search(c.Request().Context(), mediaType, query)
 	if err != nil {
-		return writeError(c, http.StatusBadGateway, "anilist search failed: "+err.Error())
+		// 詳細は外部に出さずログにだけ残す。上流の URL や内部事情がクライアントに漏れるため（BACKLOG 4-d）。
+		c.Logger().Errorf("search: %v", err)
+		return writeError(c, http.StatusBadGateway, "anilist search failed")
 	}
 	if results == nil {
 		results = []anilist.SearchResult{}
@@ -93,7 +95,8 @@ func (h *SearchHandler) ByIDs(c echo.Context) error {
 
 	results, err := h.usecase.ByIDs(c.Request().Context(), mediaType, ids)
 	if err != nil {
-		return writeError(c, http.StatusBadGateway, "anilist request failed: "+err.Error())
+		c.Logger().Errorf("search: by ids: %v", err)
+		return writeError(c, http.StatusBadGateway, "anilist request failed")
 	}
 	if results == nil {
 		results = []anilist.SearchResult{}
@@ -111,7 +114,8 @@ func (h *SearchHandler) Relations(c echo.Context) error {
 
 	results, err := h.usecase.Relations(c.Request().Context(), id)
 	if err != nil {
-		return writeError(c, http.StatusBadGateway, "anilist request failed: "+err.Error())
+		c.Logger().Errorf("search: relations: %v", err)
+		return writeError(c, http.StatusBadGateway, "anilist request failed")
 	}
 	if results == nil {
 		results = []anilist.RelatedWork{}
@@ -150,7 +154,8 @@ func (h *SearchHandler) Recommendations(c echo.Context) error {
 
 	results, err := h.usecase.Recommendations(c.Request().Context(), mediaType, genres)
 	if err != nil {
-		return writeError(c, http.StatusBadGateway, "anilist request failed: "+err.Error())
+		c.Logger().Errorf("search: recommendations: %v", err)
+		return writeError(c, http.StatusBadGateway, "anilist request failed")
 	}
 	if results == nil {
 		results = []anilist.SearchResult{}
