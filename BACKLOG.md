@@ -4,7 +4,7 @@
 更新しながら使う。個々のタスクの詳細な仕様や調査経緯は `prompt*.md` を参照すること
 （promptN.md は書かれた時点の記録なので、着手順については本ファイルを優先する）。
 
-最終更新: 2026-10-04
+最終更新: 2026-10-12
 
 ---
 
@@ -176,7 +176,7 @@ Fargate を選ぶのは**学習が目的だから**であり、このアプリ�
   （`ture` のような綴り間違いで `Secure` が黙って外れるのを防ぐ）。
   Phase 2 の HTTPS 化で `COOKIE_SECURE=true` にすること。
 
-#### Phase 1: 最小構成で動かす（ALB なし）
+#### ~~Phase 1: 最小構成で動かす（ALB なし）~~ — **完了（2026-10-12）**
 
 **作業手順は `docs/DEPLOY-AWS.md`**（コンソール/CLI の具体的な操作、つまずきポイント、
 費用の止め方・消し方）。ここには方針だけを書く。
@@ -204,6 +204,8 @@ DB の調査やアドホックな操作は **ECS Exec**（`aws ecs execute-comma
 IP は再起動・Spot 中断・デプロイのたびに変わる。
 
 #### Phase 2: 公開構成（ALB）
+
+**作業手順は `docs/DEPLOY-AWS-PHASE2.md`。** ここには方針だけを書く。
 
 ALB・ACM 証明書・Route53 を追加し、タスク SG のインバウンドを ALB SG からのみに変更する。
 HTTP → HTTPS リダイレクトを設定し、Cookie の `Secure` を有効化する。ここで初めて常用できる。
@@ -234,7 +236,107 @@ CI/CD は GitHub Actions から **OIDC で AssumeRole**（アクセスキーを 
 
 詳細は prompt7.md を参照。
 
-### 4. 統計ダッシュボード（prompt4.md 候補 3）
+### 4. 公開前のセキュリティ対応
+
+**3 の Phase 2（ALB + 独自ドメインでの公開）とセットで必要。** Phase 1 は SG を自分の IP に
+絞っていたので問題にならなかったが、全世界に開けると前提が変わる。2026-10-12 にコードを
+一通り読んで洗い出したもの。
+
+**性質を先に書いておく**: このアプリで公開によって生じるリスクは、**情報が漏れる側ではなく
+「ただで使い潰される」側**に寄っている。IDOR・SQL インジェクション・CSRF といった古典的な
+ものは既に塞がっている（下の「調査済み・対応不要」を参照）ので、そこを疑って時間を使わないこと。
+
+#### 4-a. 未認証の外部 API プロキシが増幅器になっている（最優先）
+
+`/api/search`・`/api/anilist/media`・`/api/anilist/relations`・`/api/recommendations`・
+`/api/translate` はすべてログイン不要（`internal/handler/router.go`）。ここに次が重なる。
+
+- AniList クライアントのトークンバケットは **2.5 秒/トークン・バースト 5**
+  （`internal/anilist/client.go`）。つまり**プロセス全体で 24 req/分**しか出ない。
+- `/api/anilist/media?ids=` は**件数上限なし・キャッシュなし**
+  （`internal/usecase/search/search.go` の `ByIDs` は素通し）。50 件ごとに分割して上流を叩く
+  （`internal/anilist/queries.go` の `byIDsPageSize`）。
+  → **`ids` に 5,000 個入れた 1 リクエストで AniList 100 本 = 250 秒、全ユーザーぶんの
+  トークンを食い潰せる。** 認証も要らない。
+- `/api/search` も**キャッシュなし**。Jikan フォールバックが付くので 1 リクエストで上流 2 本になりうる。
+- `/api/translate` は本文長の上限なし。`internal/translate/client.go` が 450 バイトごとに
+  分割して MyMemory を叩くので、**1MB のテキスト = 約 2,300 リクエスト**。MyMemory の匿名利用は
+  IP あたりの日次上限があるため、**ALB の IP ごと弾かれて翻訳機能が死ぬ**。
+- `home-cache-warm` と `next-airing-sync` も同じバケットを使うので、**攻撃中は定期ジョブも止まる**。
+- タスクは 1 つ固定なので逃げ場がない（2 を参照）。
+
+`/api/home/*` はキャッシュ済みなので対象外。
+
+対応案（軽い順）:
+
+1. `ids` の件数上限（100 程度）、`q` と `text` の長さ上限。**これだけで最悪ケースは消える**
+2. `middleware.BodyLimit("64K")`
+3. IP ごとのレート制限（`middleware.RateLimiter`）
+4. `/api/search` 系を `RequireUser` の下に移す。フロントがログイン後しか使わないなら
+   これが一番確実。ただし未ログインでホーム画面を見せる設計なら `/api/home/*` は残す
+
+#### 4-b. サインアップが全開
+
+誰でもアカウントを作れる。各ユーザーのレコードが `next-airing-sync` の対象になるので、
+**AniList の消費がユーザー数に比例して増え**、2-b で書いた「処理件数が 0 に収束する」前提が崩れる。
+RDS の 20GB も埋められる。
+
+学習用の個人アプリなので、**サインアップを閉じるのが一番安い**。
+ALB のリスナールールで `/api/auth/signup` を 403 にすればコード変更なしで済む。
+
+#### 4-c. ユーザー列挙が 2 経路ある
+
+- `/api/auth/signup` が既存メールに **409 "email already registered"** を返す
+  （`internal/handler/auth_handler.go`）
+- **タイミング差**: 存在しないメールは `FindByEmail` が即 `ErrNotFound` を返して bcrypt を
+  回さない。存在すれば bcrypt（50〜100ms）が回る（`internal/usecase/auth/auth.go`）。
+  直すならユーザーが見つからなくてもダミーハッシュに対して `CompareHashAndPassword` を回す
+
+#### 4-d. その他（まとめて）
+
+| 項目 | 場所 | 内容 |
+| --- | --- | --- |
+| 上流エラーの素通し | `search_handler.go` / `translate_handler.go` | `"anilist search failed: " + err.Error()` を返している。上流の URL や内部事情が外に出る。クライアントには定型文、詳細はログへ |
+| ログインにレート制限なし | `/api/auth/login` | bcrypt cost 10 を 0.25 vCPU で回すので、ブルートフォースであると同時に CPU の DoS |
+| ボディ長の上限なし | 全エンドポイント | **Echo は既定でボディ上限を持たない**。0.5GB のタスクなので大きなボディ数本で OOM → タスク再起動 |
+| サーバのタイムアウト不足 | `cmd/server/main.go` | `ReadHeaderTimeout` だけ。`ReadTimeout` / `WriteTimeout` / `IdleTimeout` が無い。ALB がある程度吸収するが、ボディを遅く送る接続が goroutine を占有する |
+| セキュリティヘッダなし | `internal/handler/router.go` | `e.Use()` が 1 つも無い。HSTS / `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy`。`middleware.Secure()` でだいたい入る |
+| コンテナが root 実行 | `Dockerfile` | `USER` 指定が無い。`adduser -D app` + `USER app` の 2 行。ECS Exec で入るときも root になる |
+| セッショントークンが平文保存 | `session_repository.go` | DB が漏れたら即なりすまし。ハッシュ化して保存すると影響が減る |
+| 期限切れセッションが残る | `sessions` テーブル | `expires_at > now()` で弾いてはいるが行は消えない。2 のスケジューラにジョブを 1 本足すのが自然 |
+| ログアウトが現在の端末のみ | `usecase/auth` | パスワード変更も「全端末からログアウト」も無い |
+| 72 バイト超のパスワード | `usecase/auth` | bcrypt がエラーを返し、分かりにくい 400 になる |
+| ALB のアクセスログ無効 | インフラ | 公開するなら S3 に出しておくと追跡できる（保存料のみ） |
+| `DATABASE_URL` がログに出る可能性 | `cmd/server/main.go` | 起動時の `pgxpool.New` 失敗が `log.Fatal` に流れる。pgx のパースエラーに接続文字列が含まれるケースがあるので、**一度わざと壊して CloudWatch を確認する** |
+
+#### 調査済み・対応不要（再調査しないこと）
+
+2026-10-12 時点でコードを読んで確認したもの。
+
+- **IDOR**: records の SELECT / UPDATE / DELETE はすべて `AND user_id = $N` でスコープされている
+  （`internal/infrastructure/postgres/record_repository.go`）
+- **SQL インジェクション**: 全クエリがプレースホルダ
+- **CSRF**: Cookie が `SameSite=Lax` + `HttpOnly`（`internal/handler/auth_handler.go`）。
+  状態を変えるのは POST/PATCH/DELETE だけで、HTML フォームからのクロスサイト POST に Cookie は
+  付かない。CORS ヘッダも出していないので fetch からも読めない
+- **パストラバーサル**: `http.Dir` が `..` を含むパスを拒否する（`static_handler.go`）
+- **パスワードとトークン**: bcrypt と `crypto/rand` 32 バイト。妥当
+- **RDS**: パブリックアクセス無効、SG はタスク SG からの 5432 のみ
+
+#### 着手順
+
+公開前に最低限やるのは **4-a の 1・2 と 4-b**。4-a-1 がいちばん効くわりに数行で済む。
+
+1. `ids` の件数上限 + `text` の長さ上限（4-a-1）
+2. `middleware.BodyLimit` + `middleware.Secure`（2 行）
+3. サインアップを閉じる（4-b。ALB のリスナールールならコード変更なし）
+4. `/api/auth/login` のレート制限
+5. `Dockerfile` に `USER`
+
+残り（4-c、4-d の後半）は公開後でよい。**ただし「公開しない／自分しか使わない」と決めるなら
+4-b だけで足りる**ので、先に公開範囲を決めること。
+
+### 5. 統計ダッシュボード（prompt4.md 候補 3）
 
 **着手前に判断が必要**: 月別視聴本数を出すなら `completed_at` 相当のカラムが要る
 （`created_at` は追加日、`updated_at` は評価の編集でも動くため代用できない）。
@@ -243,7 +345,7 @@ CI/CD は GitHub Actions から **OIDC で AssumeRole**（アクセスキーを 
 ステータス別内訳とジャンル分布は既に `LibraryPage.tsx` にあるので、専用ページの新規価値は
 「もっと詳しく出る」程度。スコープを絞ること。
 
-### 5. タイトルの JA/EN 切替ボタン（prompt.md）
+### 6. タイトルの JA/EN 切替ボタン（prompt.md）
 
 サーバー側のフォールバック（`internal/anilist/queries.go`、日本作品は native 優先、
 韓国・中国作品は english 優先）は実装済みだが、**ユーザーが切り替える UI がない**。
@@ -251,7 +353,7 @@ CI/CD は GitHub Actions から **OIDC で AssumeRole**（アクセスキーを 
 
 面が小さく他に依存しないので、いつ入れてもよい。
 
-### 6. Web Push 通知（prompt4.md 候補 2-b）
+### 7. Web Push 通知（prompt4.md 候補 2-b）
 
 **最もコストが大きいので最後。** 2-b（`next_airing_at` の更新ジョブ）が終わっていることが前提。
 

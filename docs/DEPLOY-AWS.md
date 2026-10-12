@@ -6,13 +6,17 @@
 `BACKLOG.md` を読むこと。
 
 対象は **Phase 1 = 平文 HTTP の学習用の足場**。常用する構成ではない。HTTPS 化（ALB・独自ドメイン）は
-Phase 2 で、この文書の最後に道筋だけ書いてある。
+**[`DEPLOY-AWS-PHASE2.md`](DEPLOY-AWS-PHASE2.md)** に分けてある。
 
 最終更新: 2026-10-04
 
 ---
 
 ## 0. この作業で作るもの
+
+構成図は **[`diagrams/aws-architecture.drawio`](diagrams/aws-architecture.drawio)**（AWS 公式アイコン、
+Phase 1 / Phase 2 の 2 ページ）。開き方と PNG の書き出し方は
+[`diagrams/README.md`](diagrams/README.md) を参照。以下は同じ内容の簡易版。
 
 ```
                     インターネット
@@ -773,22 +777,22 @@ aws ecs describe-tasks --cluster amt-cluster \
 
 ---
 
-## Phase 2: HTTPS で公開する（この手順書の範囲外・道筋のみ）
+## Phase 2: HTTPS で公開する
 
-Phase 1 は**平文 HTTP で IP 直打ち**なので、常用してはいけない。公開するなら:
+**手順書は [`DEPLOY-AWS-PHASE2.md`](DEPLOY-AWS-PHASE2.md)。** ALB・ACM 証明書・Route 53 を足し、
+タスク SG のインバウンドを ALB からのみに変更して、独自ドメインの HTTPS で公開する。
+ここで初めて常用できる構成になる。
 
-1. **ドメインを取得**（Route 53 で取るか、持っているものを移管）
-2. **ACM で証明書を発行**（Route 53 の DNS 検証なら自動。ALB と同じリージョンで取る）
-3. **ターゲットグループ**を作る（ターゲットタイプ **IP**、ポート 8080、ヘルスチェックパス `/healthz`）
-4. **ALB** を作る（パブリックサブネット 2 つ、`amt-alb-sg` はインバウンド 80/443 を全世界に）
-5. **タスク SG のインバウンドを `amt-alb-sg` からの 8080 のみに変更**（自分の IP のルールは削除）
-6. **ECS サービスにターゲットグループを紐付ける**
-   （**既存サービスには後から付けられない**。サービスを作り直す）
-7. **HTTP → HTTPS のリダイレクト**をリスナーに設定
-8. **`COOKIE_SECURE=true` に変更**してタスク定義を再登録（Phase 1 で `false` のままだと
-   HTTPS 化の意味が半減する。`internal/config/config.go` の既定は `false`）
+Phase 1 からの差分の要点:
 
-追加費用は **ALB 月 $18 前後**。Phase 1 の $20 と合わせて月 $38 前後。
+- アクセス先が `http://<毎回変わる IP>:8080` から `https://<独自ドメイン>` になる
+- タスク SG のインバウンドが「自分の IP」から「ALB SG のみ」に変わる
+- **`COOKIE_SECURE=true` に変更する**（`internal/config/config.go` の既定は `false`）
+- **NAT なし・単一タスクの方針は変わらない。** ALB を入れても
+  `minimumHealthyPercent: 0` のままなので、**デプロイ中のダウンタイムは残る**
+
+追加費用は ALB が月 $18 前後、Route 53 ホストゾーンが月 $0.50、ドメインが年 $14 前後。
+Phase 1 の $20 と合わせて月 $38〜40 前後。
 
 ---
 
