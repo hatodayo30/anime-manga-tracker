@@ -1,0 +1,54 @@
+# Orca (https://onorca.dev) がワークツリーを作るときの設定。
+# 確認: orca repo hooks show --repo <selector>
+
+scripts:
+  # 新しいワークツリーを作った直後に、そのワークツリー内で実行される。
+  setup: |
+    set -eu
+
+    # .env は .worktreeinclude でコピーされる。何らかの理由で無ければ雛形から作る。
+    # （config.Load は DATABASE_URL が空だと起動時にエラーにするため、これが無いと何も動かない）
+    [ -f .env ] || cp .env.example .env
+
+    # このワークツリー専用の API ポートを探して .env に書き込む。
+    # 既定の 8090 のままだと、複数のワークツリーでサーバーを起動したとき衝突する。
+    port=8091
+    while lsof -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; do
+      port=$((port + 1))
+    done
+    sed -i '' -E "s|^PORT=.*|PORT=${port}|" .env
+
+    # frontend/node_modules は worktree.sharedDirectories で共有しているので、
+    # 通常ここは no-op。共有を外した場合や初回だけ走る。
+    [ -d frontend/node_modules ] || npm --prefix frontend install
+
+    echo "--------------------------------------------------"
+    echo "このワークツリーのポート: ${port}"
+    echo ""
+    echo "  API : go run ./cmd/server"
+    echo "  Web : cd frontend && BACKEND_PORT=${port} npm run dev -- --port $((port + 100))"
+    echo ""
+    echo "ただしサーバーを起動するのは 1 ワークツリーだけにすること。"
+    echo "起動のたびに AniList を 5 本・Jikan を 10 本消費する（目安 30 req/分）。"
+    echo "--------------------------------------------------"
+
+# setup が終わるまでエージェントを待たせる。
+# .env と node_modules が無い状態で走り出すと、エージェントが「ビルドが壊れている」と
+# 誤認して余計な修正を始めるため。
+setupAgentStartupPolicy: wait-for-setup
+
+# 新しいワークツリーで最初から開いておくタブ。
+# 意図的にサーバー起動タブを置いていない（上記のレート制限のため）。
+defaultTabs:
+  - title: Agent
+  - title: Git
+    command: git status --short
+
+worktree:
+  # gitignore 済みディレクトリをワークツリー間で共有する。
+  # npm install はワークツリー作成で一番時間を食うので共有して省く。
+  #
+  # 注意: package.json / package-lock.json を触るタスクを並列で走らせるときは
+  # この行を外すこと。1 つのワークツリーでの npm install が他にも即座に効く。
+  sharedDirectories:
+    - frontend/node_modules

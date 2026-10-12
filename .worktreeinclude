@@ -1,0 +1,7 @@
+# Orca が新しいワークツリーへコピーする、gitignore 済みのファイル。
+# 1 行 1 パス、リポジトリルート基準の literal パスのみ（glob・除外指定は無視される）。
+# コピーであって symlink ではないので、ワークツリーごとに書き換えてよい。
+
+# DATABASE_URL と COOKIE_SECURE を引き継ぐため。
+# PORT は orca.yaml の setup スクリプトがワークツリーごとに書き換える。
+.env
