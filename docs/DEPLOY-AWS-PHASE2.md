@@ -47,9 +47,12 @@
 | 8 | タスク SG を ALB からのみに変更 | — |
 | 9 | `COOKIE_SECURE=true` + `TRUST_PROXY=true` | — |
 | 10 | 動作確認 | — |
+| 11 | サインアップを閉じる（BACKLOG 4-b） | — |
 
 **Step 8 は Step 7 の確認が済んでから。** 先に自分の IP を塞ぐと、ALB 経由が繋がらなかったときに
 確認する手段が無くなる。
+
+**Step 11 は Step 10 の後。** 先に閉じると、動作確認でテスト用アカウントを作れなくなる。
 
 ### 所要時間とお金
 
@@ -498,6 +501,9 @@ curl --max-time 5 http://${PUBLIC_IP}:8080/healthz
 4. ホーム画面に今季アニメ・話題の漫画が出る（外向き通信が生きている）
 5. 検索 → ライブラリに追加（DB 書き込み）
 
+> **ここが自由にサインアップできる最後の機会。** Step 11 でサインアップを閉じるので、
+> 常用するアカウントはこの段階で作っておく（閉じた後に作る手順は 11-3 にある）。
+
 ### 10-4. レート制限が IP ごとに効いているか（TRUST_PROXY の検証）
 
 **ここを飛ばさないこと。** `TRUST_PROXY` を取りこぼしていると、全利用者が ALB の IP で
@@ -547,6 +553,74 @@ pgx のパースエラーに接続文字列が含まれるケースがあるた�
 
 > ヘルスチェックはアプリのログには出ない（このアプリはリクエストログのミドルウェアを
 > 入れていないため）。30 秒ごとのアクセスでログが溢れる心配はない。
+
+---
+
+## Step 11: サインアップを閉じる（BACKLOG 4-b）
+
+**動作確認が終わってから最後にやる。** 順番を守ること——先に閉じると Step 10-3 で
+テスト用アカウントを作れなくなる。**自分のアカウントを作り終えてから**この手順に進む。
+
+### なぜ閉じるか
+
+誰でもアカウントを作れる状態で公開すると、設計の前提が 2 つ崩れる。
+
+- **`next-airing-sync` の AniList 消費がユーザー数に比例して増える。** このジョブは
+  「処理すべき件数が 0 に収束する」ことを前提に 30 分間隔・100 ID に設定してある
+  （BACKLOG 2-b）。登録作品が増え続けると収束しなくなる
+- **RDS の 20GB を埋められる**
+
+学習用の個人アプリなので、**閉じるのが一番安い。** アプリ側の変更は要らない。
+
+### 11-1. リスナールールを足す
+
+```bash
+export LISTENER_ARN=$(aws elbv2 describe-listeners --load-balancer-arn $ALB_ARN \
+  --query "Listeners[?Port==\`443\`].ListenerArn | [0]" --output text)
+
+aws elbv2 create-rule \
+  --listener-arn $LISTENER_ARN \
+  --priority 10 \
+  --conditions '[{"Field":"path-pattern","PathPatternConfig":{"Values":["/api/auth/signup"]}}]' \
+  --actions '[{"Type":"fixed-response","FixedResponseConfig":{"StatusCode":"403","ContentType":"application/json","MessageBody":"{\"error\":\"signup is closed\"}"}}]'
+```
+
+> **優先度は小さいほど先に評価される。** 既定アクション（タスクへ転送）より前に効かせる
+> 必要があるので、他のルールがなければ `10` でよい。
+
+### 11-2. 閉じたことを確認する
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://${DOMAIN}/api/auth/signup" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"blocked@example.com","password":"password123"}'
+# 403  ← これが正しい
+
+# ログインは今までどおり通ること（閉じすぎていないか）
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://${DOMAIN}/api/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"<自分のメール>","password":"<自分のパスワード>"}'
+# 200
+```
+
+ブラウザでも、既にログイン済みのセッションがそのまま使えることを確認する。
+
+> **フロントの登録画面は残る。** `/signup` を開けてフォームも出るが、送信すると 403 になる。
+> 画面から導線を消すのは別タスク（UI 変更が要る）。自分しか使わない前提なら放置でよい。
+
+### 11-3. 自分のアカウントを追加したくなったら
+
+ルールを一時的に消して作り、また足す。
+
+```bash
+# ルール ARN を控えてから消す
+aws elbv2 describe-rules --listener-arn $LISTENER_ARN \
+  --query 'Rules[?Priority==`10`].RuleArn' --output text
+
+aws elbv2 delete-rule --rule-arn <上で出た ARN>
+# ... サインアップ ...
+# 11-1 のコマンドでもう一度足す
+```
 
 ---
 
@@ -703,9 +777,10 @@ Phase 1 の `create-service` との差分は `--load-balancers` と
 Phase 1・2 を手で一周したので、次は **[Terraform 化](DEPLOY-AWS.md#この後-terraform-化)**。
 `BACKLOG.md` に書いたとおり、**一度すべて削除して Terraform で作り直す**。
 
-Phase 2 で増えたリソース（ACM・ALB・ターゲットグループ・リスナー 2 本・Route 53 レコード）は、
-Terraform だと `aws_lb` / `aws_lb_target_group` / `aws_lb_listener` / `aws_acm_certificate` /
-`aws_route53_record` に 1 対 1 で対応する。手で作った順番がそのままリソースの依存関係になる。
+Phase 2 で増えたリソース（ACM・ALB・ターゲットグループ・リスナー 2 本・Route 53 レコード・
+サインアップを閉じるリスナールール）は、Terraform だと `aws_lb` / `aws_lb_target_group` /
+`aws_lb_listener` / `aws_acm_certificate` / `aws_route53_record` / `aws_lb_listener_rule` に
+1 対 1 で対応する。手で作った順番がそのままリソースの依存関係になる。
 
 CI/CD を繋ぐのもこのタイミング。GitHub Actions から **OIDC で AssumeRole** し、
 `ecr push` → `register-task-definition` → `update-service` を回す。
