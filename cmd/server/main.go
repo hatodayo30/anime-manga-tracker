@@ -86,6 +86,7 @@ func run() error {
 		Health:      healthHandler,
 		RequireUser: authMiddleware.RequireUser,
 		WebDir:      "frontend/dist",
+		TrustProxy:  cfg.TrustProxy,
 	})
 
 	waitJobs := scheduler.New(
@@ -105,10 +106,26 @@ func run() error {
 		},
 	).Start(ctx)
 
+	// ReadHeaderTimeout だけだとヘッダ受信後のボディ読み取りに期限が無く、ボディを 1 バイトずつ
+	// 送り続ける接続が goroutine と接続を無期限に握れる（BodyLimit はサイズしか見ない）。
+	//   - ReadTimeout 15s: 接続受付からボディ読み終わりまで。最大のボディは BodyLimit の 64K で、
+	//     低速回線（数十 KB/s）でも数秒で届く。ヘッダ 5s ＋ボディ分の余裕で 15s。
+	//   - WriteTimeout 60s: ヘッダ読み終わりからレスポンス書き終わりまで、つまりハンドラの処理時間を含む。
+	//     最も遅い正当な経路はキャッシュが冷えた状態の AniList 呼び出しで、トークンバケット
+	//     （24 req/分 = 2.5 秒に 1 本）の待ち行列に並ぶと数十秒かかりうる。ここを短くすると
+	//     処理は終わったのに書き込めず、空の応答で切れる。60s は ALB のアイドルタイムアウト既定値と同じで、
+	//     それより長くしても ALB 側で先に切れるだけなので意味が無い。
+	//     なお WriteTimeout が切るのは書き込みだけで、リクエストの context は取り消されない。
+	//     ハンドラ自体は最後まで走るので、上流呼び出しの上限は各クライアントの http.Client.Timeout が担う。
+	//   - IdleTimeout 120s: keep-alive の待機。ALB のアイドルタイムアウト（60s）より長くしておかないと、
+	//     ALB が再利用しようとした接続をこちらが先に閉じて 502 になる。
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           e,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
