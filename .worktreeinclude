@@ -5,3 +5,6 @@
 # DATABASE_URL と COOKIE_SECURE を引き継ぐため。
 # PORT は orca.yaml の setup スクリプトがワークツリーごとに書き換える。
 .env
+
+# 認証情報の読み取りを塞ぐ deny ルール（マシン固有の絶対パスを含む）
+.claude/settings.local.json
