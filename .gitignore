@@ -33,3 +33,6 @@ go.work.sum
 
 # macOS
 .DS_Store
+
+# Claude Code のローカル設定（マシン固有の絶対パスを含むのでコミットしない）
+.claude/settings.local.json

@@ -110,6 +110,11 @@ ECS は `desiredCount: 1` 固定。この前提を崩す変更は BACKLOG で設
 - **AWS を変更する操作と、Postgres ボリュームを消す操作はブロックされる**
   （`.claude/hooks/block-destructive.sh`）。`aws` は `describe-*` / `list-*` / `get-*` のみ通る。
   ECS / RDS の操作は `docs/DEPLOY-AWS.md` を見ながら人間が実行する。
+- **認証情報ファイル（`~/.aws` / `~/.ssh` / `~/.config/gh` など）は読めない**
+  （`.claude/hooks/block-secret-reads.sh` と `permissions.deny`）。
+  このリポジトリの作業に認証情報は要らない。リポジトリ内の `.env` は読める。
+- フックを変更したら回帰テストを通すこと。
+  `bash .claude/hooks/block-destructive.test.sh` / `bash .claude/hooks/block-secret-reads.test.sh`
 - コミットメッセージは Conventional Commits 形式（`feat:` / `fix:` / `docs:` / `chore:`）＋日本語。
 - commit・push・PR 作成は `/pr` でまとめて実行できる。
 
