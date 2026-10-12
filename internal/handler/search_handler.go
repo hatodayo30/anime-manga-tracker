@@ -26,6 +26,16 @@ const (
 	// 日本語タイトルを考慮してバイトではなく文字で数える。作品名としてはこれで足りるし、
 	// 長い q は上流で無駄にヒットしない（= Jikan フォールバックも走る）だけ。
 	maxSearchQueryRunes = 100
+
+	// maxRecommendGenres は /api/recommendations の genres の件数上限。
+	// AniList のジャンルは 20 種類ほどしかないので、これを超える指定は正当な利用ではない。
+	maxRecommendGenres = 20
+
+	// maxGenresParamRunes は genres パラメータ全体の長さ上限（文字数）。
+	// 件数と別に長さも見るのは、この文字列がそのまま
+	// おすすめキャッシュのキー（`type|genres`）になるため。
+	// 長さを縛らないと、1 エントリあたりのメモリを呼び出し側が決められてしまう。
+	maxGenresParamRunes = 400
 )
 
 type SearchHandler struct {
@@ -120,12 +130,20 @@ func (h *SearchHandler) Recommendations(c echo.Context) error {
 	}
 
 	genresParam := strings.TrimSpace(c.QueryParam("genres"))
+	if utf8.RuneCountInString(genresParam) > maxGenresParamRunes {
+		return writeError(c, http.StatusBadRequest, "genres must be "+strconv.Itoa(maxGenresParamRunes)+" characters or fewer")
+	}
+
 	var genres []string
 	if genresParam != "" {
 		for g := range strings.SplitSeq(genresParam, ",") {
 			g = strings.TrimSpace(g)
-			if g != "" {
-				genres = append(genres, g)
+			if g == "" {
+				continue
+			}
+			genres = append(genres, g)
+			if len(genres) > maxRecommendGenres {
+				return writeError(c, http.StatusBadRequest, "genres must contain "+strconv.Itoa(maxRecommendGenres)+" genres or fewer")
 			}
 		}
 	}

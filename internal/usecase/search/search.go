@@ -20,6 +20,13 @@ const jikanFallbackThreshold = 3
 // 短めにしておく。
 const recommendCacheTTL = 3 * time.Minute
 
+// recommendCacheMaxEntries はおすすめキャッシュが保持するキーの数。
+// キーは `type|genres` で、genres はクエリパラメータ由来なので際限なく増えうる
+// （season/year と同じ事情。home.seasonBrowseCacheMaxEntries を参照）。
+// 上限を設けてメモリ使用量を一定に保つ。0.5GB のタスクで動かす前提なので、
+// 「際限なく増えうるキャッシュ」は全て上限付きにしておく。
+const recommendCacheMaxEntries = 128
+
 type Usecase struct {
 	anilist AniListGateway
 	jikan   JikanGateway
@@ -31,7 +38,7 @@ func NewUsecase(anilistGateway AniListGateway, jikanGateway JikanGateway) *Useca
 	return &Usecase{
 		anilist:        anilistGateway,
 		jikan:          jikanGateway,
-		recommendCache: cache.New[[]anilist.SearchResult](recommendCacheTTL),
+		recommendCache: cache.NewBounded[[]anilist.SearchResult](recommendCacheTTL, recommendCacheMaxEntries),
 	}
 }
 

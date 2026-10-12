@@ -75,6 +75,37 @@ func TestSearchRejectsTooLongQuery(t *testing.T) {
 	}
 }
 
+// genres の上限。件数と全体の長さの両方で弾く。長さも見るのは、この文字列がそのまま
+// おすすめキャッシュのキーになるため（1 エントリのメモリを呼び出し側に決めさせない）。
+func TestRecommendationsRejectsOversizedGenres(t *testing.T) {
+	tests := []struct {
+		name     string
+		genres   string
+		wantCode int
+		wantCall bool
+	}{
+		{name: "上限ちょうどの件数は通す", genres: joinGenres(20), wantCode: http.StatusOK, wantCall: true},
+		{name: "件数超過は弾く", genres: joinGenres(21), wantCode: http.StatusBadRequest, wantCall: false},
+		{name: "長さ超過は弾く", genres: strings.Repeat("a", 401), wantCode: http.StatusBadRequest, wantCall: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gw := &fakeAniList{}
+			h := handler.NewSearchHandler(search.NewUsecase(gw, &fakeJikan{}))
+
+			rec := call(t, h.Recommendations, "/api/recommendations?type=anime&genres="+tt.genres)
+
+			if rec.Code != tt.wantCode {
+				t.Errorf("status = %d, want %d (body: %s)", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if gw.byGenresCalls != boolToInt(tt.wantCall) {
+				t.Errorf("ByGenres calls = %d, want %d", gw.byGenresCalls, boolToInt(tt.wantCall))
+			}
+		})
+	}
+}
+
 func call(t *testing.T, h echo.HandlerFunc, target string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -94,6 +125,14 @@ func joinIDs(n int) string {
 	return strings.Join(ids, ",")
 }
 
+func joinGenres(n int) string {
+	genres := make([]string, n)
+	for i := range genres {
+		genres[i] = "Genre" + strconv.Itoa(i+1)
+	}
+	return strings.Join(genres, ",")
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
@@ -105,6 +144,7 @@ func boolToInt(b bool) int {
 type fakeAniList struct {
 	searchCalls     int
 	mediaByIDsCalls int
+	byGenresCalls   int
 }
 
 func (f *fakeAniList) Search(context.Context, string, domain.MediaType) ([]anilist.SearchResult, error) {
@@ -123,6 +163,7 @@ func (f *fakeAniList) Relations(context.Context, int64) ([]anilist.RelatedWork, 
 }
 
 func (f *fakeAniList) ByGenres(context.Context, []string, domain.MediaType) ([]anilist.SearchResult, error) {
+	f.byGenresCalls++
 	return nil, nil
 }
 
