@@ -669,17 +669,41 @@ aws ecr get-login-password --region ${AWS_REGION} \
 docker build --platform linux/amd64 -t ${ECR_REPO}:${TAG} .
 docker push ${ECR_REPO}:${TAG}
 
-# タスク定義の image を差し替えて再登録
-sed -i '' "s|${ECR_REPO}:[a-f0-9]*|${ECR_REPO}:${TAG}|" /tmp/amt-taskdef.json
+# 登録済みの最新のタスク定義から作り直し、image だけ差し替えて再登録
+aws ecs describe-task-definition --task-definition anime-manga-tracker \
+  --query 'taskDefinition' --output json \
+  | jq --arg img "${ECR_REPO}:${TAG}" '
+      del(.taskDefinitionArn,.revision,.status,.requiresAttributes,
+          .compatibilities,.registeredAt,.registeredBy,.deregisteredAt)
+      | .containerDefinitions[0].image = $img
+    ' > /tmp/amt-taskdef.json
 aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
 
 # サービスに反映
 aws ecs update-service --cluster amt-cluster --service amt-service \
   --task-definition anime-manga-tracker
 aws ecs wait services-stable --cluster amt-cluster --services amt-service
+
+# 動いているイメージのタグが ${TAG} と一致することを確認する（必須）
+aws ecs describe-task-definition --task-definition \
+  $(aws ecs describe-services --cluster amt-cluster --services amt-service \
+      --query 'services[0].taskDefinition' --output text) \
+  --query 'taskDefinition.containerDefinitions[0].image' --output text
 ```
 
 `minimumHealthyPercent=0` にしているので、**この間 30〜60 秒ほど落ちる**。意図した挙動。
+
+> **`/tmp/amt-taskdef.json` を `sed` で書き換える形をやめた理由。** 以前の手順は Step 6 で作った
+> `/tmp/amt-taskdef.json` が残っている前提だったが、`/tmp` は再起動で消える。さらに Phase 2 の
+> Step 10 で環境変数を足したタスク定義は、このファイルに反映されていない。
+> 古いファイルを使うと、環境変数が巻き戻ったタスク定義を黙って登録してしまう。
+> 毎回、登録済みの最新リビジョンから作り直す。
+
+> **最後の確認を省かない。** 2026-10-22 に、タスク定義を登録し直したのにイメージは
+> `6c548cb`（Phase 1 のときのもの）のまま、という状態で公開していた。10-13 に入れた
+> セキュリティ対応（レート制限・入力上限・エラー詳細の非表示・非 root 実行）がまるごと
+> 本番に載っておらず、ECS はそれでも正常に動くので気付けない。出力のタグが
+> `git rev-parse --short main` と一致しなければ、デプロイはできていない。
 
 ### 実行中のコンテナに入る（ECS Exec）
 
@@ -693,9 +717,15 @@ aws ecs execute-command --cluster amt-cluster --task $TASK_ARN \
 ```
 
 > **このイメージには `psql` が入っていない**（`alpine:3.20` + バイナリだけ）。
-> シェルには入れるが SQL は叩けない。DB を直接見たくなったら、その場で
-> `apk add --no-cache postgresql-client` を実行する（タスクが入れ替わると消える）。
-> 恒久的に必要になったら `Dockerfile` に入れるかを判断する。
+> シェルには入れるが SQL は叩けない。
+>
+> **その場で `apk add` して入れることもできない。** `3b08059` でコンテナを非 root
+> （`USER 10001:10001`、`Dockerfile`）で動かすようにしたため、ECS Exec のシェルも
+> このユーザーになり、パッケージを入れる権限がない（以前の手順にあった
+> `apk add --no-cache postgresql-client` は失敗するはず。本番では未確認）。
+> 非 root はコンテナを乗っ取られたときの被害を減らすための判断なので、これを戻して解決しないこと。
+> DB を直接見る必要が出たら、`psql` 入りのイメージで一時タスクを起動する方法を、
+> そのとき検討する。
 
 ### 費用を止める（しばらく触らないとき）
 
