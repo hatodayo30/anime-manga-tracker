@@ -52,8 +52,8 @@ var (
 	// 毎秒数回のログインで CPU が埋まる。つまりブルートフォースであると同時に CPU の DoS になる。
 	// 人間の打ち間違いは数回で収まるので、1 IP あたり 5 回まで即時、以後 12 秒に 1 回。
 	// 1 IP が使える bcrypt は毎分 5 回程度に収まり、総当たりは 1 IP で 1 日 7,200 回が上限になる。
-	// 多数の IP からの分散攻撃は IP 単位の制限では止められない（BACKLOG 4-b のサインアップを閉じる、
-	// アカウント単位のロックなどは別の話）。
+	// 多数の IP からの分散攻撃は IP 単位の制限では止められない（アカウント単位のロックなどは別の話）。
+	// /api/auth/signup もこの制限を共有する（NewRouter の登録箇所を参照）。
 	loginRateLimit = middleware.RateLimiterMemoryStoreConfig{
 		Rate:      5.0 / 60,
 		Burst:     5,
@@ -152,8 +152,14 @@ func NewRouter(h Handlers) *echo.Echo {
 	e.GET("/api/recommendations/ai", h.Recommend.AI, h.RequireUser)
 
 	// login は全体の制限に加えて専用の厳しい制限を重ねる（全体の 1 本としても数える）。
-	// signup も bcrypt を回すが、BACKLOG 4-b で閉じる前提なので全体の制限だけにしている。
-	e.POST("/api/auth/signup", h.Auth.SignUp, publicAPILimit)
+	// signup にも同じ loginLimit を重ねる。理由は 2 つ:
+	//   - signup も 1 回ごとに bcrypt を回すので、CPU の DoS としては login と同じ重さ。
+	//     4-b でサインアップを閉じないと決めたので、閉じる前提で緩めておく理由が無くなった。
+	//   - 既存メールに 409 を返すので、signup はメールアドレスの存在確認に使える（BACKLOG 4-c）。
+	//     使い勝手のために 409 は残し、代わりに確認できる速さを login の総当たりと同じに抑える。
+	// 同じミドルウェア（= 同じストア）を渡しているので、1 IP の枠は login と signup で共有になる。
+	// 別々にすると、交互に叩くだけで枠が倍になる。
+	e.POST("/api/auth/signup", h.Auth.SignUp, publicAPILimit, loginLimit)
 	e.POST("/api/auth/login", h.Auth.Login, publicAPILimit, loginLimit)
 	e.POST("/api/auth/logout", h.Auth.Logout, publicAPILimit)
 	e.GET("/api/auth/me", h.Auth.Me, publicAPILimit)
