@@ -86,11 +86,9 @@ func run() error {
 		log.Printf("ai: disabled (ANTHROPIC_API_KEY is not set)")
 	}
 
-	// AniList のジャンル・タグの一覧。自然文検索（9-b）と AI おすすめ（9-c）で共有する。
-	// 下の `_ =` は、両方がマージされるまで未使用の変数でビルドが落ちないためのもの。9-b と 9-c が
-	// それぞれ消すと同じ行で衝突するので、両方のマージ後に消す。
+	// AniList のジャンル・タグの一覧。自然文検索（9-b）と AI おすすめ（9-c）で共有し、
+	// AniList の枠を 1 本で済ませる。
 	taxonomyUsecase := taxonomy.NewUsecase(anilistClient)
-	_ = taxonomyUsecase
 
 	// nil の Gateway を usecase に渡すと MyMemory だけで動く。
 	// （*claude.Client の nil をそのまま渡すと、インターフェースとしては nil にならないので分岐で渡し分ける）

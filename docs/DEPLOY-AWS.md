@@ -705,10 +705,11 @@ aws ecs describe-task-definition --task-definition \
 > 本番に載っておらず、ECS はそれでも正常に動くので気付けない。出力のタグが
 > `git rev-parse --short main` と一致しなければ、デプロイはできていない。
 
-### AI 翻訳（Claude）の API キーを入れる（一度だけ）
+### AI（Claude）の API キーを入れる（一度だけ）
 
-`ANTHROPIC_API_KEY` が無くてもアプリは動く（起動ログに `ai translate: disabled` が出て、
-翻訳は従来どおり MyMemory だけになる）。AI 翻訳を有効にするときに 1 回だけ行う。
+`ANTHROPIC_API_KEY` が無くてもアプリは動く（起動ログに `ai: disabled` が出て、翻訳は MyMemory だけ、
+自然文検索は従来の検索、AI おすすめの棚はジャンルベースのおすすめになる）。AI の機能を有効にするときに
+1 回だけ行う。翻訳・自然文検索・AI おすすめは同じキーと同じ日次上限を共有する。
 
 **先に Anthropic Console で月の利用上限（Spend limit）を設定しておく。** アプリ側の日次上限
 （`CLAUDE_DAILY_TOKEN_LIMIT`、既定 200 万トークン）はプロセス内のメモリにあり、
