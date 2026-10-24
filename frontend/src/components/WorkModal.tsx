@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useTitleLang } from '../context/TitleLangContext'
 import { api } from '../lib/api'
 import { STATUS_LABELS, activateOnKey, colorForTitle, formatScore, translateGenre, translateRelation, unitFor, type MediaKind, type Status } from '../lib/util'
 import type { LibraryRecord, RelatedWork } from '../types'
@@ -12,6 +13,7 @@ const TRANSLATE_WAIT_MS = 6000
 
 interface FreshInfo {
   total: number | null // アニメ=話数 / 漫画=巻数
+  titleEn?: string
   airingStatus?: string
   nextEpisode?: number | null
 }
@@ -27,6 +29,7 @@ interface Props {
 
 export function WorkModal({ item, mediaType, record, onChange, onClose, openRelated }: Props) {
   const { user } = useAuth()
+  const { displayTitle } = useTitleLang()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -135,6 +138,8 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
         : await api.createRecord({
             anilistId: item.anilistId,
             mediaType,
+            // 表示言語に関係なく日本語の作品名を保存する。ライブラリのタイトル順は日本語の照合順序で並べており、
+            // 切り替えた時点の言語で保存すると記録ごとに言語が混ざる
             title: item.title,
             coverImageUrl: item.coverImageUrl || '',
             genres: item.genres || [],
@@ -216,7 +221,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
 
   const openRelatedWorkModal = (work: RelatedWork) => {
     openRelated({
-      item: { anilistId: work.anilistId, title: work.title, coverImageUrl: work.coverImageUrl, genres: [] },
+      item: { anilistId: work.anilistId, title: work.title, titleEn: work.titleEn, coverImageUrl: work.coverImageUrl, genres: [] },
       mediaType: work.mediaType,
       record: null,
       onChange,
@@ -233,6 +238,8 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
       : null
   const progressCap = airingEp != null ? airingEp : total
 
+  // ライブラリの記録から開いたときは item に titleEn が無いので、最新情報の取得で届いた英題を使う
+  const titled = { title: item.title, titleEn: item.titleEn ?? freshInfo?.titleEn }
   const scoreLabel = formatScore(item.score)
   const metaParts = [mediaType === 'anime' ? 'アニメ' : '漫画', total ? `全${total}${unit}` : '連載中']
   if (scoreLabel) metaParts.push(`★${scoreLabel}`)
@@ -266,11 +273,11 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
 
         <div style={{ display: 'flex', gap: 'var(--space-6)', padding: '0 var(--space-6) var(--space-6)', marginTop: -56 }}>
           <div style={{ width: 132, flex: 'none' }}>
-            <Thumb item={item} fontSize={38} style={{ width: '132px', aspectRatio: '2/3', boxShadow: 'var(--shadow-md)' }} />
+            <Thumb item={{ ...item, ...titled }} fontSize={38} style={{ width: '132px', aspectRatio: '2/3', boxShadow: 'var(--shadow-md)' }} />
           </div>
           <div style={{ flex: 1, minWidth: 0, paddingTop: 60 }}>
             <h3 id="work-modal-title" style={{ margin: '0 0 6px', fontSize: 21, lineHeight: 1.3 }}>
-              {item.title}
+              {displayTitle(titled)}
             </h3>
             <div className="text-muted" style={{ fontSize: 12, marginBottom: 10 }}>
               {metaParts.join('・')}
@@ -430,7 +437,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
                       {translateRelation(work.relationType)}
                     </div>
                     <div style={{ fontSize: 11, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {work.title}
+                      {displayTitle(work)}
                     </div>
                   </div>
                 ))}

@@ -89,6 +89,13 @@ a:hover { color: color-mix(in srgb, var(--color-accent) 80%, white); }
   margin-top: auto; font-size: 11px; line-height: 1.7;
   color: color-mix(in srgb, var(--color-text) 45%, transparent); padding: 0 10px;
 }
+.sidebar-title-lang {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 0 10px; margin-top: var(--space-3); font-size: 11px;
+}
+.sidebar-title-lang .seg-opt { padding: 4px 10px; font-size: 12px; }
+.mobile-topbar { display: none; justify-content: flex-end; margin-bottom: var(--space-3); }
+.mobile-topbar .seg-opt { padding: 4px 10px; font-size: 12px; }
 .main { flex: 1; min-width: 0; padding: 36px 40px 48px; }
 .main.has-bottom-nav { padding: 24px 18px 92px; }
 .screen { max-width: 1080px; }
@@ -115,6 +122,7 @@ a:hover { color: color-mix(in srgb, var(--color-accent) 80%, white); }
 
 @media (max-width: 800px) {
   .sidebar { display: none; }
+  .mobile-topbar { display: flex; }
   .main { padding: 24px 18px 92px; }
   .bottom-nav { display: flex; }
 }

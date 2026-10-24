@@ -180,6 +180,17 @@ func pickTitle(entry searchEntry) string {
 	return entry.Title
 }
 
+// pickEnglishTitle は EN 表示用の作品名を選ぶ（BACKLOG 6）。英題が無ければ Jikan の既定の
+// タイトル（MAL の表記で、日本作品ならローマ字）にする。anilist.englishTitle と同じ考え方。
+func pickEnglishTitle(entry searchEntry) string {
+	for _, t := range entry.Titles {
+		if t.Type == "English" && t.Title != "" {
+			return t.Title
+		}
+	}
+	return entry.Title
+}
+
 func genreNames(genres []jikanGenre) []string {
 	names := make([]string, 0, len(genres))
 	for _, g := range genres {
@@ -219,6 +230,7 @@ func toSearchResult(kind string, entry searchEntry, rank int) anilist.SearchResu
 	return anilist.SearchResult{
 		AniListID:     synthAniListID,
 		Title:         pickTitle(entry),
+		TitleEn:       pickEnglishTitle(entry),
 		CoverImageURL: entry.Images.JPG.ImageURL,
 		Genres:        genreNames(entry.Genres),
 		Total:         total,

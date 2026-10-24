@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { TitleLangToggle } from './TitleLangToggle'
 
 const NAV_ITEMS = [
   {
@@ -113,12 +114,20 @@ export function Layout({ children }: { children: ReactNode }) {
           <br />
           ひとつの記録に。
         </div>
+        <div className="sidebar-title-lang">
+          <span className="text-muted">作品名</span>
+          <TitleLangToggle />
+        </div>
         <div style={{ padding: '0 10px', marginTop: 'var(--space-3)' }}>
           <AuthSlot />
         </div>
       </nav>
 
       <main className="main has-bottom-nav">
+        {/* モバイルではサイドバーが消えるので、切り替えを画面の上に出す */}
+        <div className="mobile-topbar">
+          <TitleLangToggle />
+        </div>
         <div className="screen">{children}</div>
       </main>
 

@@ -27,7 +27,8 @@ export interface LibraryRecord {
 // AniList検索結果（search/recommendations/season-anime/trending で共通のshape）。
 export interface AniListItem {
   anilistId: number
-  title: string
+  title: string // 日本語 UI 向けの作品名。ライブラリへ追加するときはこちらを保存する
+  titleEn?: string // EN 表示を選んだときの作品名（BACKLOG 6）。表示にだけ使う
   coverImageUrl: string
   genres: string[]
   total: number | null // アニメ=話数 / 漫画=巻数（進捗の追跡単位）
@@ -51,6 +52,7 @@ export interface MangaRankingItem extends AniListItem {
 export interface RelatedWork {
   anilistId: number
   title: string
+  titleEn?: string
   coverImageUrl: string
   mediaType: MediaKind
   relationType: string

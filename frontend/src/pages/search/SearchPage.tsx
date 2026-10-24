@@ -498,7 +498,7 @@ function ResultGrid({
         return (
           <div className="srch-reveal" style={staggerStyle(i)} key={w.id}>
             <PosterCard
-              item={{ title: w.title, coverImageUrl: w.coverUrl }}
+              item={{ title: w.title, titleEn: w.source.titleEn, coverImageUrl: w.coverUrl }}
               badgeLabel={status ? `${status} ✓` : null}
               caption={w.genres.slice(0, 2).join('・')}
               onClick={() => onOpenWork(w)}

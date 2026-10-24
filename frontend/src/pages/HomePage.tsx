@@ -5,6 +5,7 @@ import { KindToggle } from '../components/KindToggle'
 import { Thumb } from '../components/Thumb'
 import { useWorkModal } from '../components/WorkModalContext'
 import { useAuth } from '../context/AuthContext'
+import { useTitleLang } from '../context/TitleLangContext'
 import { useKind } from '../hooks/useKind'
 import { api } from '../lib/api'
 import {
@@ -281,6 +282,7 @@ function ScheduleDays({
   library: Map<number, LibraryRecord>
   onOpen: (item: AniListItem) => void
 }) {
+  const { displayTitle } = useTitleLang()
   const todayName = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Tokyo', weekday: 'short' }).format(new Date())
   const todayIndex = WEEKDAY_EN_SHORT.indexOf(todayName)
 
@@ -323,7 +325,7 @@ function ScheduleDays({
               >
                 <Thumb item={item} width="24px" height="32px" fontSize={12} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 11, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title}</div>
+                  <div style={{ fontSize: 11, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayTitle(item)}</div>
                   <div className="text-muted" style={{ fontSize: 10, marginTop: 2 }}>
                     {hour}:{minute}
                     {library.has(item.anilistId) ? ' ・ 記録済み' : ''}
@@ -339,6 +341,7 @@ function ScheduleDays({
 }
 
 function RankingPoster({ item, rank, onClick }: { item: MangaRankingItem; rank: number; onClick: () => void }) {
+  const { displayTitle } = useTitleLang()
   const score = formatScore(item.score)
   const captionParts = [score ? `★${score}` : null, item.malRank ? `MAL #${item.malRank}` : null].filter(Boolean)
 
@@ -346,7 +349,7 @@ function RankingPoster({ item, rank, onClick }: { item: MangaRankingItem; rank: 
     <div className="poster-card poster-card-ranked" onClick={onClick} role="button" tabIndex={0} onKeyDown={activateOnKey(onClick)}>
       <span className="poster-rank-num">{rank}</span>
       <Thumb item={item} fontSize={26} className="poster-thumb" />
-      <div className="poster-title">{item.title}</div>
+      <div className="poster-title">{displayTitle(item)}</div>
       {captionParts.length > 0 && (
         <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
           {captionParts.join(' ・ ')}

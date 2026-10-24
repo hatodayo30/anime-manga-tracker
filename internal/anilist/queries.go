@@ -16,8 +16,11 @@ var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
 // SearchResult は検索結果として画面に返す1作品分の情報。
 type SearchResult struct {
-	AniListID     int64    `json:"anilistId"`
-	Title         string   `json:"title"` // 日本作品: native（漢字/かな）優先。それ以外（KR/CN等）は english 優先。
+	AniListID int64  `json:"anilistId"`
+	Title     string `json:"title"` // 日本作品: native（漢字/かな）優先。それ以外（KR/CN等）は english 優先。
+	// TitleEn は画面で EN 表示を選んだときに出す作品名（BACKLOG 6）。Title を置き換えないのは、
+	// ライブラリへの追加で保存する名前・検索結果の重複判定・タイトル順の並びを日本語のまま保つため。
+	TitleEn       string   `json:"titleEn,omitempty"`
 	CoverImageURL string   `json:"coverImageUrl"`
 	Genres        []string `json:"genres"`
 	Total         *int     `json:"total"`                  // アニメ: 話数（episodes）/ 漫画: 巻数（volumes）。進捗の追跡単位。
@@ -177,6 +180,7 @@ query ($genres: [String], $type: MediaType) {
 type RelatedWork struct {
 	AniListID     int64  `json:"anilistId"`
 	Title         string `json:"title"`
+	TitleEn       string `json:"titleEn,omitempty"` // SearchResult.TitleEn と同じ
 	CoverImageURL string `json:"coverImageUrl"`
 	MediaType     string `json:"mediaType"`    // "anime" | "manga"
 	RelationType  string `json:"relationType"` // SEQUEL/PREQUEL/SIDE_STORY/SPIN_OFF/ADAPTATION 等（AniListの生の値）
@@ -218,6 +222,7 @@ func (c *Client) Relations(ctx context.Context, id int64) ([]RelatedWork, error)
 		works = append(works, RelatedWork{
 			AniListID:     int64(node.ID),
 			Title:         displayTitle(node.Title, node.Synonyms, node.CountryOfOrigin),
+			TitleEn:       englishTitle(node.Title),
 			CoverImageURL: node.CoverImage.Medium,
 			MediaType:     strings.ToLower(node.Type),
 			RelationType:  edge.RelationType,
@@ -239,6 +244,15 @@ func displayTitle(t mediaTitle, synonyms []string, countryOfOrigin string) strin
 		return firstNonEmpty(t.Native, t.Romaji, t.English)
 	}
 	return firstNonEmpty(japaneseSynonym(synonyms), t.English, t.Romaji, t.Native)
+}
+
+// englishTitle は EN 表示を選んだ利用者に出す作品名を選ぶ（BACKLOG 6）。
+//
+// 国による出し分けはしない。EN を選ぶのは「ラテン文字で読みたい」利用者なので、english が無い
+// 作品（英訳されていない日本作品に多い）は romaji にし、native は最後の手段にとどめる。
+// 日本語側の選び方（displayTitle）には手を入れず、別の関数にして独立させている。
+func englishTitle(t mediaTitle) string {
+	return firstNonEmpty(t.English, t.Romaji, t.Native)
 }
 
 // japaneseSynonym は別名のうち、かなを含む最初のものを返す。
@@ -290,6 +304,7 @@ func toSearchResults(mediaType domain.MediaType, list []media) []SearchResult {
 		result := SearchResult{
 			AniListID:     int64(m.ID),
 			Title:         title,
+			TitleEn:       englishTitle(m.Title),
 			CoverImageURL: m.CoverImage.Medium,
 			Genres:        m.Genres,
 			Total:         total,

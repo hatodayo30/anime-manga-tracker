@@ -6,6 +6,7 @@ import { WorkModal } from './WorkModal'
 export interface WorkModalItem {
   anilistId: number
   title: string
+  titleEn?: string
   coverImageUrl?: string | null
   genres?: string[]
   synopsis?: string

@@ -126,7 +126,7 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 
 画面は 6 つ。ホーム・シーズン・おすすめはログイン不要で、検索とマイライブラリは
 `ProtectedRoute` で囲っている。アニメ / 漫画の切り替えは `useKind` が localStorage で
-全画面に共有する。
+全画面に共有する。作品名の JA / EN 切り替えは `TitleLangContext` が localStorage（`titleLang`）に保存する。
 
 | 画面 | 叩く API | 処理の要点 |
 | --- | --- | --- |
@@ -431,9 +431,10 @@ stale-while-revalidate とウォームアップの価値はむしろ上がった
 
 - **水平スケールできない**。キャッシュ・single-flight・トークンバケット・スケジューラが
   全部プロセス内。ElastiCache 等に出すまで解禁しない
-- **表示言語をサーバーが決め打ちしている**。日本作品は native 優先、韓国・中国作品は
-  別名（synonyms）のうちかなを含むもの → english の順が固定。別名に日本語タイトルが無い作品
-  （"Tower of God" など）は英語のまま
+- **作品名はサーバーが JA 用（`title`）と EN 用（`titleEn`）の 2 つを選んで返し、画面の JA / EN
+  切り替え（localStorage）でどちらを出すかだけを決める**（BACKLOG 6）。JA 用は日本作品が native 優先、
+  韓国・中国作品は別名（synonyms）のうちかなを含むもの → english の順が固定。別名に日本語タイトルが無い作品
+  （"Tower of God" など）は JA でも英語のまま。ライブラリの記録は保存時の `title` しか持たないので JA のまま
 - **AI 翻訳だけが永続化される**。Claude の訳は `translations`（原文と作品名から作ったハッシュ + 翻訳先言語）に
   保存して誰にでも返すが、MyMemory の訳は保存しない。未ログインで未保存の作品を開くと、
   毎回 MyMemory を叩く

@@ -1,8 +1,10 @@
+import { useTitleLang } from '../context/TitleLangContext'
 import { activateOnKey } from '../lib/util'
 import { Thumb } from './Thumb'
 
 interface PosterItem {
   title: string
+  titleEn?: string | null
   coverImageUrl?: string | null
 }
 
@@ -25,6 +27,7 @@ export function PosterCard({
   rating?: number | null
   onClick?: () => void
 }) {
+  const { displayTitle } = useTitleLang()
   return (
     <div
       className={`poster-card ${ranked != null ? 'poster-card-ranked' : ''}`}
@@ -38,7 +41,7 @@ export function PosterCard({
         {kindLabel && <span className="poster-kindbadge">{kindLabel}</span>}
         {badgeLabel && <span className="poster-badge">{badgeLabel}</span>}
       </Thumb>
-      <div className="poster-title">{item.title}</div>
+      <div className="poster-title">{displayTitle(item)}</div>
       {rating != null && rating > 0 && (
         <div className="poster-rating" aria-label={`評価 ★${rating}`}>
           {'★'.repeat(rating)}

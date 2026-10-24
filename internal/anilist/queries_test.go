@@ -59,6 +59,28 @@ func TestDisplayTitle(t *testing.T) {
 	}
 }
 
+// EN 表示用の作品名の選び方を保証する。english が無い作品は romaji にし、ハングル等の native は
+// ほかに何も無いときだけ使うこと。日本語表示（displayTitle）と違い、国では出し分けない。
+func TestEnglishTitle(t *testing.T) {
+	tests := []struct {
+		name  string
+		title mediaTitle
+		want  string
+	}{
+		{name: "english があれば使う", title: mediaTitle{Romaji: "Ao no Hako", Native: "アオのハコ", English: "Blue Box"}, want: "Blue Box"},
+		{name: "english が無ければ romaji", title: mediaTitle{Romaji: "Kaguya-sama wa Kokurasetai", Native: "かぐや様は告らせたい"}, want: "Kaguya-sama wa Kokurasetai"},
+		{name: "韓国作品も english を使う", title: mediaTitle{Romaji: "Na Honjaman Level Up", Native: "나 혼자만 레벨업", English: "Solo Leveling"}, want: "Solo Leveling"},
+		{name: "native しか無ければ native", title: mediaTitle{Native: "アオのハコ"}, want: "アオのハコ"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := englishTitle(tt.title); got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // 空の条件は変数ごと省くことを保証する。空の配列や空文字を渡すと、AniList が「何にも当てはまらない」
 // 条件として扱い、0 件になりうる。
 func TestFilterVariables_OmitsEmptyConditions(t *testing.T) {
