@@ -3,6 +3,7 @@ import type {
   LibraryRecord,
   Me,
   MangaRankingItem,
+  NaturalSearchResult,
   NewRecordInput,
   RelatedWork,
   UpdateRecordInput,
@@ -53,6 +54,9 @@ export const api = {
     if (genres.length === 0) return Promise.resolve<AniListItem[]>([])
     return request<AniListItem[]>('/recommendations' + buildQuery({ type, genres: genres.join(',') }))
   },
+  // 自然文検索（BACKLOG 9-b）。ログイン必須で、未ログインは 401（'login required'）になる。
+  naturalSearch: ({ type, q }: { type: MediaKind; q: string }) =>
+    request<NaturalSearchResult>('/search/natural' + buildQuery({ type, q })),
   translate: async ({ text, title, target = 'ja' }: { text: string; title?: string; target?: string }) => {
     if (!text) return ''
     const { translated } = await request<{ translated: string }>('/translate', {

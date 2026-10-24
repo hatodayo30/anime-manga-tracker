@@ -22,6 +22,9 @@ type Handlers struct {
 	// TrustProxy はレート制限のキーにするクライアント IP を X-Forwarded-For から取るかどうか。
 	// 判断の理由は config.Config.TrustProxy を参照。
 	TrustProxy bool
+
+	// NLSearch は自然文検索（BACKLOG 9-b）。
+	NLSearch *NLSearchHandler
 }
 
 // レート制限の値。キーはクライアント IP（NewRouter の IPExtractor を参照）。
@@ -139,6 +142,9 @@ func NewRouter(h Handlers) *echo.Echo {
 	e.GET("/api/home/trending-manga", h.Home.TrendingManga, publicAPILimit)
 	// translate は未ログインでも使えるが、ログイン済みなら AI 翻訳を使うので利用者を解決しておく
 	e.POST("/api/translate", h.Translate.Translate, publicAPILimit, h.OptionalUser)
+	// 自然文検索は AI を呼ぶのでログイン必須（BACKLOG 9「決めたこと」）。費用を守っているのは
+	// Claude の日次上限で、IP 単位の制限は 1 つの IP からの連打を抑えるだけ
+	e.GET("/api/search/natural", h.NLSearch.Search, publicAPILimit, h.RequireUser)
 
 	// login は全体の制限に加えて専用の厳しい制限を重ねる（全体の 1 本としても数える）。
 	// signup も bcrypt を回すが、BACKLOG 4-b で閉じる前提なので全体の制限だけにしている。
