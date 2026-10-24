@@ -30,13 +30,18 @@ type Conditions struct {
 	Tags           []string         `json:"tags"`
 	ExcludedGenres []string         `json:"excludedGenres"`
 	ExcludedTags   []string         `json:"excludedTags"`
-	// Query は文に作品名・作者名などの固有名詞があったときだけ入るキーワード
+	// Query は文に作品名・作者名があったときだけ入るキーワード
 	Query string `json:"query"`
+	// Character は文に出てきたキャラクター名（書かれたとおり）。CharacterRomaji はその読みのローマ字で、
+	// AniList のキャラクター検索に渡す。AniList は漢字の名前の一部ではほぼ見つからないため
+	// （anilist.characterQuery のコメント）。どちらも名前が無ければ空
+	Character       string `json:"character"`
+	CharacterRomaji string `json:"characterRomaji"`
 }
 
 func (c Conditions) empty() bool {
 	return len(c.Genres) == 0 && len(c.Tags) == 0 && len(c.ExcludedGenres) == 0 &&
-		len(c.ExcludedTags) == 0 && strings.TrimSpace(c.Query) == ""
+		len(c.ExcludedTags) == 0 && strings.TrimSpace(c.Query) == "" && c.CharacterRomaji == ""
 }
 
 // AIGateway は自然文を検索条件に変換する。実装は internal/claude。
@@ -52,9 +57,12 @@ type TaxonomyProvider interface {
 	Get(ctx context.Context) (anilist.Taxonomy, error)
 }
 
-// AniListGateway は条件検索。実装は internal/anilist。
+// AniListGateway は条件検索とキャラクター検索。実装は internal/anilist。
 type AniListGateway interface {
 	SearchByFilter(ctx context.Context, f anilist.Filter) ([]anilist.SearchResult, error)
+	// SearchByCharacter は f.Query をキャラクター名（ローマ字）として探し、f のジャンル・タグの条件を
+	// 満たす出演作品をキャラクターごとに返す。名前と関係の無いキャラクターも混ざって返る
+	SearchByCharacter(ctx context.Context, f anilist.Filter) ([]anilist.CharacterMatch, error)
 }
 
 // KeywordSearcher は AI が使えないときに落とす先の従来の作品名検索。実装は usecase/search。
@@ -74,6 +82,13 @@ const (
 	maxIncludes       = 2
 	maxExcludedGenres = 3
 	maxExcludedTags   = 3
+)
+
+// maxCharacters はキャラクター名で探すときに採る人数。同じ名前のキャラクターは多い（"Kaoruko" で
+// 8 人以上）ので、お気に入り数の多い順に絞る。maxCharacterWorks は SearchByFilter の件数（30）と揃える。
+const (
+	maxCharacters     = 5
+	maxCharacterWorks = 30
 )
 
 // conditionsCacheTTL / conditionsCacheMaxEntries は AI が作った条件のキャッシュ。
@@ -159,6 +174,25 @@ func (u *Usecase) Search(ctx context.Context, mediaType domain.MediaType, input 
 	if cond.MediaType.Valid() {
 		searchType = cond.MediaType
 	}
+
+	if cond.CharacterRomaji != "" {
+		items, err := u.searchByCharacter(ctx, searchType, cond)
+		if err != nil {
+			log.Printf("nlsearch: character search failed, falling back to keyword search: %v", err)
+			return u.fallback(ctx, mediaType, input, FallbackFailed)
+		}
+		if len(items) > 0 {
+			return Result{MediaType: searchType, Conditions: &cond, Items: items}, nil
+		}
+		// 名前が合うキャラクターがいなかった。AI が作品名をキャラクター名と取り違えた（「ルフィ」と
+		// 「ワンピース」の逆）こともあるので、名前を作品名のキーワードとして条件検索をやり直す。
+		// 画面に「〇〇が出る作品」と出さないよう、返す条件もキーワードに書き換える
+		if cond.Query == "" {
+			cond.Query = cond.Character
+		}
+		cond.Character, cond.CharacterRomaji = "", ""
+	}
+
 	items, err := u.anilist.SearchByFilter(ctx, anilist.Filter{
 		MediaType:      searchType,
 		Query:          cond.Query,
@@ -177,6 +211,106 @@ func (u *Usecase) Search(ctx context.Context, mediaType domain.MediaType, input 
 		items = []anilist.SearchResult{}
 	}
 	return Result{MediaType: searchType, Conditions: &cond, Items: items}, nil
+}
+
+// searchByCharacter は cond のキャラクター名で探し、名前が合うキャラクターの出演作品を人気順にまとめる。
+// cond.Query（作品名のキーワード）はここでは使わない。キャラクター検索に作品名で絞る引数が無いため。
+func (u *Usecase) searchByCharacter(ctx context.Context, mediaType domain.MediaType, cond Conditions) ([]anilist.SearchResult, error) {
+	matches, err := u.anilist.SearchByCharacter(ctx, anilist.Filter{
+		MediaType:      mediaType,
+		Query:          cond.CharacterRomaji,
+		Genres:         cond.Genres,
+		Tags:           cond.Tags,
+		ExcludedGenres: cond.ExcludedGenres,
+		ExcludedTags:   cond.ExcludedTags,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	seen := map[int64]bool{}
+	items := []anilist.SearchResult{}
+	for _, m := range pickCharacters(matches, cond.Character, cond.CharacterRomaji) {
+		for _, w := range m.Works {
+			if !seen[w.AniListID] {
+				seen[w.AniListID] = true
+				items = append(items, w)
+			}
+		}
+	}
+	slices.SortStableFunc(items, func(a, b anilist.SearchResult) int { return b.Popularity - a.Popularity })
+	if len(items) > maxCharacterWorks {
+		items = items[:maxCharacterWorks]
+	}
+	return items, nil
+}
+
+// pickCharacters は AniList の結果から名前が合うキャラクターを選び、お気に入り数の多い順に maxCharacters 人返す。
+//
+// AniList は名前と関係の無い人気キャラクターも返すので、名前で確かめる。書かれたとおりの名前（「薫子」）が
+// 日本語名か別名に含まれるキャラクターがいれば、それだけを採る。読みが同じ別の漢字（「香子」）を
+// 外すため。いなければ（ひらがなで書かれた、日本語名が登録されていない、など）ローマ字で合うものを採る。
+func pickCharacters(matches []anilist.CharacterMatch, written, romaji string) []anilist.CharacterMatch {
+	var byWritten, byRomaji []anilist.CharacterMatch
+	for _, m := range matches {
+		switch {
+		case nameContains(m.Name, written):
+			byWritten = append(byWritten, m)
+		case romajiMatches(m.Name, romaji):
+			byRomaji = append(byRomaji, m)
+		}
+	}
+	picked := byWritten
+	if len(picked) == 0 {
+		picked = byRomaji
+	}
+	slices.SortStableFunc(picked, func(a, b anilist.CharacterMatch) int { return b.Favourites - a.Favourites })
+	if len(picked) > maxCharacters {
+		picked = picked[:maxCharacters]
+	}
+	return picked
+}
+
+// nameContains は written が日本語名か別名に含まれるかを、空白を無視して判定する（「芹ヶ谷 薫子」のように
+// 姓と名の間に空白がある日本語名があるため）。
+func nameContains(n anilist.CharacterName, written string) bool {
+	w := removeSpaces(written)
+	if w == "" {
+		return false
+	}
+	for _, name := range append([]string{n.Native}, n.Alternative...) {
+		if strings.Contains(removeSpaces(name), w) {
+			return true
+		}
+	}
+	return false
+}
+
+// romajiMatches は romaji の語がすべてローマ字名か別名のどれか 1 つに含まれるかを判定する。
+// 語ごとに見るのは、姓と名の順番が AniList（"Kaoruko Waguri"）と文で逆になりうるため。
+func romajiMatches(n anilist.CharacterName, romaji string) bool {
+	words := strings.Fields(strings.ToLower(romaji))
+	if len(words) == 0 {
+		return false
+	}
+	for _, name := range append([]string{n.Full}, n.Alternative...) {
+		lower := strings.ToLower(name)
+		all := true
+		for _, w := range words {
+			if !strings.Contains(lower, w) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+func removeSpaces(s string) string {
+	return strings.Join(strings.Fields(s), "")
 }
 
 // conditions は input の検索条件をキャッシュから返し、無ければ AI に作らせる。
@@ -215,7 +349,20 @@ func sanitize(c Conditions, tax anilist.Taxonomy) Conditions {
 		tags[t.Name] = true
 	}
 
-	out := Conditions{Query: strings.TrimSpace(c.Query)}
+	out := Conditions{
+		Query:     strings.TrimSpace(c.Query),
+		Character: strings.TrimSpace(c.Character),
+	}
+	// ローマ字が無いとキャラクター検索ができないので、名前ごと捨てる。書かれた名前は作品名の
+	// キーワードとして残し、取り違え（作品名をキャラクター名とした）でも探せるようにする
+	if romaji := strings.TrimSpace(c.CharacterRomaji); romaji != "" && out.Character != "" {
+		out.CharacterRomaji = romaji
+	} else {
+		if out.Query == "" {
+			out.Query = out.Character
+		}
+		out.Character = ""
+	}
 	if c.MediaType.Valid() {
 		out.MediaType = c.MediaType
 	}

@@ -53,6 +53,7 @@ function toAiConditions(result: NaturalSearchResult, requested: MediaKind): AiCo
     excludedGenres: c.excludedGenres.map(translateGenre),
     excludedTags: c.excludedTags,
     query: c.query,
+    character: c.character,
   }
 }
 

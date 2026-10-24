@@ -106,6 +106,7 @@
 .srch-tok { display: inline-flex; align-items: center; padding: 1px 11px; margin: 0 2px; border-radius: var(--radius-pill); font-size: 13px; line-height: 1.7; vertical-align: 1px; }
 .srch-tok-kind { background: var(--color-neutral-800); color: var(--color-neutral-100); }
 .srch-tok-genre { background: var(--color-accent-800); color: var(--color-accent-100); }
+.srch-tok-character { background: var(--color-neutral-800); color: var(--color-accent-100); }
 .srch-tok-tag { border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent); color: var(--color-accent-100); padding: 0 10px; }
 .srch-kind-note { font-size: 12px; }
 .srch-cond-extra { font-size: 12px; margin: 2px 0 0; }

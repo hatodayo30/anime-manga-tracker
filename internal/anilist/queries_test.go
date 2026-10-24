@@ -89,3 +89,32 @@ func TestFilterVariables_MinimumTagRankOnlyWithTags(t *testing.T) {
 		t.Error("expected minimumTagRank to be omitted without tags")
 	}
 }
+
+// キャラクターから引いた作品の絞り込みが、filterQuery（AniList 側の絞り込み）と同じ意味になることを保証する。
+// ずれると、同じ文でもキャラクター名の有無で結果の基準が変わる。
+func TestMatchesFilter(t *testing.T) {
+	genres := []string{"Romance", "Drama"}
+	tags := map[string]int{"School": 90, "Cooking": 30}
+
+	tests := []struct {
+		name string
+		f    Filter
+		want bool
+	}{
+		{name: "条件なしなら通す", f: Filter{}, want: true},
+		{name: "ジャンルはすべてを含めば通す", f: Filter{Genres: []string{"Romance", "Drama"}}, want: true},
+		{name: "含まないジャンルが 1 つでもあれば落とす", f: Filter{Genres: []string{"Romance", "Action"}}, want: false},
+		{name: "タグは下限以上なら通す", f: Filter{Tags: []string{"School"}}, want: true},
+		{name: "タグが付いていても下限未満なら落とす", f: Filter{Tags: []string{"Cooking"}}, want: false},
+		{name: "除外ジャンルを含めば落とす", f: Filter{ExcludedGenres: []string{"Drama"}}, want: false},
+		{name: "除外タグは下限未満でも付いていれば落とす", f: Filter{ExcludedTags: []string{"Cooking"}}, want: false},
+		{name: "付いていないタグの除外は通す", f: Filter{ExcludedTags: []string{"Gore"}}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matchesFilter(genres, tags, tt.f); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -30,8 +30,10 @@ export interface AiConditions {
   tags: string[]
   excludedGenres: string[]
   excludedTags: string[]
-  /** 文に作品名などの固有名詞があったときだけ入る */
+  /** 文に作品名・作者名があったときだけ入る */
   query: string
+  /** 文に出てきたキャラクター名。結果はこのキャラクターの出演作品 */
+  character: string
 }
 
 /** 従来の作品名検索に落ちた理由。3 つは画面で出し分ける */

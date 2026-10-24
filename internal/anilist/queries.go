@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -602,4 +603,162 @@ func omitEmpty(vars map[string]any, key string, values []string) {
 	if len(values) > 0 {
 		vars[key] = values
 	}
+}
+
+// characterQuery はキャラクター名で探し、出演作品を引く（自然文検索のキャラクター名、BACKLOG 9-b）。
+//
+// 2026-10-25 に AniList を直接叩いて確かめたこと:
+//   - 漢字の名前の一部ではほぼ見つからない。「薫子」で当たったのは「和栗薫子」だけで、日本語名が
+//     登録されている「萌田薫子」「天川薫子」も当たらず、残りの枠には名前と関係の無い人気キャラクター
+//     （五条悟・リヴァイなど）が入った。ローマ字の "Kaoruko" なら 8 人とも Kaoruko だった。
+//     なので search にはローマ字を渡し、名前が合わない結果は呼び出し側で捨てる前提にしている
+//   - 出演作品（media）は type と sort が効き、作品ごとに isAdult と characterRole が取れる。
+//     isAdult で絞る引数は無いので、受け取ってから除く（他の検索の isAdult:false と揃えるため）
+//
+// tags は SearchByFilter と同じ条件（minimumTagRank）でここで絞るために取る。
+// キャラクターから引いた作品を、もう一度 AniList でジャンル・タグ検索すると枠を 2 本使うため。
+const characterQuery = `
+query ($search: String, $type: MediaType, $perPage: Int, $mediaPerPage: Int) {
+  Page(page: 1, perPage: $perPage) {
+    characters(search: $search, sort: [SEARCH_MATCH]) {
+      name { full native alternative }
+      favourites
+      media(type: $type, sort: [POPULARITY_DESC], perPage: $mediaPerPage) {
+        edges {
+          characterRole
+          node {` + mediaFields + `
+            isAdult
+            tags { name rank }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+const (
+	// characterPerPage は名前が合わない結果を捨てる前提で多めに取る
+	characterPerPage = 10
+	// characterMediaPerPage は 1 人あたりの出演作品。人気順なので、続編・劇場版が多いキャラクターでも
+	// 本編は先頭に来る
+	characterMediaPerPage = 10
+)
+
+// CharacterName は AniList のキャラクター名。呼び出し側が「探した名前と合うか」を判定するために返す。
+type CharacterName struct {
+	Full        string
+	Native      string
+	Alternative []string
+}
+
+// CharacterMatch はキャラクター 1 人と、Filter の条件を満たした出演作品。
+type CharacterMatch struct {
+	Name       CharacterName
+	Favourites int
+	Works      []SearchResult
+}
+
+type characterResponse struct {
+	Page struct {
+		Characters []struct {
+			Name struct {
+				Full        string   `json:"full"`
+				Native      string   `json:"native"`
+				Alternative []string `json:"alternative"`
+			} `json:"name"`
+			Favourites int `json:"favourites"`
+			Media      struct {
+				Edges []struct {
+					CharacterRole string `json:"characterRole"`
+					Node          struct {
+						media
+						IsAdult bool `json:"isAdult"`
+						Tags    []struct {
+							Name string `json:"name"`
+							Rank int    `json:"rank"`
+						} `json:"tags"`
+					} `json:"node"`
+				} `json:"edges"`
+			} `json:"media"`
+		} `json:"characters"`
+	} `json:"Page"`
+}
+
+// SearchByCharacter は f.Query をキャラクター名（ローマ字）として探し、出演作品のうち f のジャンル・タグの
+// 条件を満たすものを返す。条件の意味は SearchByFilter と同じ（ジャンル・タグはすべてを含む、
+// タグは minimumTagRank 以上、除外はどれも含まない）。成人向けと、背景（BACKGROUND）としてだけ
+// 出ている作品は除く。ちょい役の作品を「このキャラが出る作品」として出さないため。
+//
+// AniList はキャラクター名と関係の無い結果も返すので、どのキャラクターを採るかは呼び出し側が
+// CharacterMatch.Name で判定すること。
+func (c *Client) SearchByCharacter(ctx context.Context, f Filter) ([]CharacterMatch, error) {
+	if !f.MediaType.Valid() {
+		return nil, fmt.Errorf("invalid media type: %s", f.MediaType)
+	}
+	search := strings.TrimSpace(f.Query)
+	if search == "" {
+		return []CharacterMatch{}, nil
+	}
+
+	var resp characterResponse
+	err := c.do(ctx, characterQuery, map[string]any{
+		"search":       search,
+		"type":         strings.ToUpper(string(f.MediaType)),
+		"perPage":      characterPerPage,
+		"mediaPerPage": characterMediaPerPage,
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	matches := make([]CharacterMatch, 0, len(resp.Page.Characters))
+	for _, ch := range resp.Page.Characters {
+		var works []media
+		for _, e := range ch.Media.Edges {
+			n := e.Node
+			if n.IsAdult || e.CharacterRole == "BACKGROUND" {
+				continue
+			}
+			tagRanks := make(map[string]int, len(n.Tags))
+			for _, t := range n.Tags {
+				tagRanks[t.Name] = t.Rank
+			}
+			if !matchesFilter(n.Genres, tagRanks, f) {
+				continue
+			}
+			works = append(works, n.media)
+		}
+		matches = append(matches, CharacterMatch{
+			Name:       CharacterName{Full: ch.Name.Full, Native: ch.Name.Native, Alternative: ch.Name.Alternative},
+			Favourites: ch.Favourites,
+			Works:      toSearchResults(f.MediaType, works),
+		})
+	}
+	return matches, nil
+}
+
+// matchesFilter は filterQuery が AniList 側でしている絞り込みを手元で再現する。
+func matchesFilter(genres []string, tagRanks map[string]int, f Filter) bool {
+	for _, g := range f.Genres {
+		if !slices.Contains(genres, g) {
+			return false
+		}
+	}
+	for _, t := range f.Tags {
+		if tagRanks[t] < filterMinimumTagRank {
+			return false
+		}
+	}
+	for _, g := range f.ExcludedGenres {
+		if slices.Contains(genres, g) {
+			return false
+		}
+	}
+	for _, t := range f.ExcludedTags {
+		if _, ok := tagRanks[t]; ok {
+			return false
+		}
+	}
+	return true
 }
