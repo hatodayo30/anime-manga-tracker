@@ -23,6 +23,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/search"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/taxonomy"
 	translateusecase "github.com/hatodayo30/anime-manga-tracker/internal/usecase/translate"
 	"github.com/hatodayo30/anime-manga-tracker/migrations"
 )
@@ -72,14 +73,28 @@ func run() error {
 	homeHandler := handler.NewHomeHandler(homeUsecase)
 	airingUsecase := airing.NewUsecase(recordRepo, anilistClient)
 
-	// API キーが無い環境では AI 翻訳を組み込まない。nil の Gateway を usecase に渡すと MyMemory だけで動く。
+	// Claude のクライアントは AI の全機能で 1 つを共有する。日次上限（Budget）はプロセス全体の
+	// 上限なので、機能ごとに作ると上限がその数だけ緩む。API キーが無い環境では nil のままにし、
+	// 各機能は従来の経路だけで動く。
+	var claudeClient *claude.Client
+	if cfg.AnthropicAPIKey != "" {
+		claudeClient = claude.NewClient(cfg.AnthropicAPIKey, claude.NewBudget(cfg.ClaudeDailyTokenLimit, time.Now))
+		log.Printf("ai: enabled (daily limit %d tokens)", cfg.ClaudeDailyTokenLimit)
+	} else {
+		log.Printf("ai: disabled (ANTHROPIC_API_KEY is not set)")
+	}
+
+	// AniList のジャンル・タグの一覧。自然文検索（9-b）と AI おすすめ（9-c）で共有する。
+	// 下の `_ =` は、両方がマージされるまで未使用の変数でビルドが落ちないためのもの。9-b と 9-c が
+	// それぞれ消すと同じ行で衝突するので、両方のマージ後に消す。
+	taxonomyUsecase := taxonomy.NewUsecase(anilistClient)
+	_ = taxonomyUsecase
+
+	// nil の Gateway を usecase に渡すと MyMemory だけで動く。
 	// （*claude.Client の nil をそのまま渡すと、インターフェースとしては nil にならないので分岐で渡し分ける）
 	var aiTranslator translateusecase.AIGateway
-	if cfg.AnthropicAPIKey != "" {
-		aiTranslator = claude.NewClient(cfg.AnthropicAPIKey, claude.NewBudget(cfg.ClaudeDailyTokenLimit, time.Now))
-		log.Printf("ai translate: enabled (daily limit %d tokens)", cfg.ClaudeDailyTokenLimit)
-	} else {
-		log.Printf("ai translate: disabled (ANTHROPIC_API_KEY is not set)")
+	if claudeClient != nil {
+		aiTranslator = claudeClient
 	}
 	translateUsecase := translateusecase.NewUsecase(
 		postgres.NewTranslationRepository(pool), aiTranslator, translate.NewClient())

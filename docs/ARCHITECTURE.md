@@ -72,7 +72,7 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 | --- | --- |
 | `cmd/server/` | エントリポイント。DI の配線、マイグレーション実行、HTTP サーバーとスケジューラの起動・停止 |
 | `internal/domain/` | ドメインモデルと値オブジェクト（`Record`, `User`, `Status`, `MediaType`, `SortKey`）。他層に依存しない |
-| `internal/usecase/` | ユースケース層。`auth` / `record` / `search` / `home` / `translate` / `airing` と、横断で使う `cache` |
+| `internal/usecase/` | ユースケース層。`auth` / `record` / `search` / `home` / `translate` / `airing` / `taxonomy`（AI 機能が使うジャンル・タグ一覧）と、横断で使う `cache` |
 | `internal/handler/` | HTTP ハンドラ、ルーティング、静的ファイル配信、ヘルスチェック |
 | `internal/middleware/` | セッション Cookie による認証ミドルウェア |
 | `internal/scheduler/` | プロセス内の定期ジョブランナー |

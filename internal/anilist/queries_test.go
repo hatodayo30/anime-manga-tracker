@@ -1,6 +1,10 @@
 package anilist
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
+)
 
 // 作品名の選び方を保証する。韓国・中国作品で別名に日本語版のタイトルがあればそれを使い、
 // 漢字だけの別名（中国語と見分けられない）は使わないこと。
@@ -52,5 +56,36 @@ func TestDisplayTitle(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// 空の条件は変数ごと省くことを保証する。空の配列や空文字を渡すと、AniList が「何にも当てはまらない」
+// 条件として扱い、0 件になりうる。
+func TestFilterVariables_OmitsEmptyConditions(t *testing.T) {
+	got := filterVariables(Filter{MediaType: domain.MediaTypeAnime, Query: "  ", Genres: []string{}})
+
+	for _, key := range []string{"search", "genres", "tags", "excludedGenres", "excludedTags", "minimumTagRank"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("expected %q to be omitted, got %v", key, got[key])
+		}
+	}
+	if got["type"] != "ANIME" {
+		t.Errorf("type = %v, want ANIME", got["type"])
+	}
+}
+
+// タグの下限は、タグで絞るときだけ付けることを保証する。
+func TestFilterVariables_MinimumTagRankOnlyWithTags(t *testing.T) {
+	withTags := filterVariables(Filter{MediaType: domain.MediaTypeManga, Tags: []string{"Isekai"}, ExcludedTags: []string{"Gore"}})
+	if withTags["minimumTagRank"] != filterMinimumTagRank {
+		t.Errorf("expected minimumTagRank with tags, got %v", withTags["minimumTagRank"])
+	}
+	if withTags["type"] != "MANGA" {
+		t.Errorf("type = %v, want MANGA", withTags["type"])
+	}
+
+	excludeOnly := filterVariables(Filter{MediaType: domain.MediaTypeManga, ExcludedTags: []string{"Gore"}})
+	if _, ok := excludeOnly["minimumTagRank"]; ok {
+		t.Error("expected minimumTagRank to be omitted without tags")
 	}
 }

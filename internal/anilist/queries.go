@@ -455,3 +455,151 @@ func (c *Client) Search(ctx context.Context, query string, mediaType domain.Medi
 
 	return toSearchResults(mediaType, resp.Page.Media), nil
 }
+
+// taxonomyQuery はジャンルとタグの一覧を 1 リクエストでまとめて取る。どちらも自然文検索・AI おすすめで
+// 構造化出力の enum に使う（BACKLOG 9-b）。別々に取ると AniList の枠を 2 本使う。
+const taxonomyQuery = `
+query {
+  GenreCollection
+  MediaTagCollection {
+    name
+    description
+    category
+    isAdult
+    isGeneralSpoiler
+  }
+}
+`
+
+// MediaTag は AniList のタグ 1 件。
+type MediaTag struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Category    string `json:"category"` // "Theme-Fantasy" など。AI に渡すときの並べ替えや絞り込みに使える
+	// IsGeneralSpoiler は、タグ自体がネタバレになるもの（"Time Loop" が終盤で明かされる作品など）。
+	// 検索の条件に使うのは問題ないが、理由の文に書くとネタバレになる。
+	IsGeneralSpoiler bool `json:"isGeneralSpoiler"`
+}
+
+// Taxonomy は AniList が受け付けるジャンル名とタグ名の一覧。
+type Taxonomy struct {
+	Genres []string
+	Tags   []MediaTag
+}
+
+type taxonomyResponse struct {
+	GenreCollection    []string `json:"GenreCollection"`
+	MediaTagCollection []struct {
+		MediaTag
+		IsAdult bool `json:"isAdult"`
+	} `json:"MediaTagCollection"`
+}
+
+// adultGenre は GenreCollection に含まれる成人向けジャンル。他の検索と同じく isAdult:false で
+// 引くので、enum に入れても 0 件にしかならない。
+const adultGenre = "Hentai"
+
+// Taxonomy はジャンルとタグの一覧を返す。成人向けのジャンル・タグは除く。
+//
+// 一覧はめったに変わらないので、呼び出し側（usecase/taxonomy）で長い TTL でキャッシュする前提。
+func (c *Client) Taxonomy(ctx context.Context) (Taxonomy, error) {
+	var resp taxonomyResponse
+	if err := c.do(ctx, taxonomyQuery, nil, &resp); err != nil {
+		return Taxonomy{}, err
+	}
+
+	t := Taxonomy{
+		Genres: make([]string, 0, len(resp.GenreCollection)),
+		Tags:   make([]MediaTag, 0, len(resp.MediaTagCollection)),
+	}
+	for _, g := range resp.GenreCollection {
+		if g != adultGenre {
+			t.Genres = append(t.Genres, g)
+		}
+	}
+	for _, tag := range resp.MediaTagCollection {
+		if !tag.IsAdult {
+			t.Tags = append(t.Tags, tag.MediaTag)
+		}
+	}
+	return t, nil
+}
+
+// filterQuery はジャンル・タグ・除外ジャンル・除外タグ・キーワードで絞り込む。どの条件も
+// 空なら AniList に null が渡り、その条件は無視される（omitEmpty を参照）。
+//
+// minimumTagRank は、作品に付いたタグの「どれだけ当てはまるか」（0〜100、AniList の利用者の投票）の
+// 下限。下限が無いと、料理が 1 話だけ出てくる作品まで "Cooking" で引っかかる。60 は
+// 根拠のある値ではない仮の目安で、実際の検索結果では確かめていない。
+//
+// genre_in / tag_in に複数の値を渡したとき「すべてを含む」か「どれかを含む」かは実機で確かめていない
+// （byGenresQuery のコメントは「いずれか」としている）。9-b の着手時に確認すること。
+const filterQuery = `
+query ($type: MediaType, $search: String, $genres: [String], $tags: [String], $excludedGenres: [String], $excludedTags: [String], $minimumTagRank: Int, $perPage: Int) {
+  Page(page: 1, perPage: $perPage) {
+    media(type: $type, search: $search, genre_in: $genres, tag_in: $tags, genre_not_in: $excludedGenres, tag_not_in: $excludedTags, minimumTagRank: $minimumTagRank, sort: [POPULARITY_DESC], isAdult: false) {` + mediaFields + `
+    }
+  }
+}
+`
+
+const (
+	filterMinimumTagRank = 60
+	// filterPerPage は byGenresQuery と同じ件数。AI おすすめの候補もこの中から並べ替える
+	filterPerPage = 30
+)
+
+// Filter は SearchByFilter の条件。MediaType 以外はすべて省略できる。
+//
+// ジャンル名・タグ名は Taxonomy が返したものだけを渡すこと。AniList は知らないジャンル名でも
+// エラーにせず 0 件を返すので、間違いに気付けない。
+type Filter struct {
+	MediaType      domain.MediaType
+	Query          string // 作品名などのキーワード。AniList の search にそのまま渡る
+	Genres         []string
+	Tags           []string
+	ExcludedGenres []string
+	ExcludedTags   []string
+}
+
+// SearchByFilter は自然文検索・AI おすすめ向けに、Filter の条件で AniList を人気順に検索する。
+func (c *Client) SearchByFilter(ctx context.Context, f Filter) ([]SearchResult, error) {
+	if !f.MediaType.Valid() {
+		return nil, fmt.Errorf("invalid media type: %s", f.MediaType)
+	}
+
+	var resp pageResponse
+	err := c.do(ctx, filterQuery, filterVariables(f), &resp)
+	if err != nil {
+		return nil, err
+	}
+	return toSearchResults(f.MediaType, resp.Page.Media), nil
+}
+
+func filterVariables(f Filter) map[string]any {
+	vars := map[string]any{
+		"type":    strings.ToUpper(string(f.MediaType)),
+		"perPage": filterPerPage,
+	}
+	// 空の配列や空文字を渡すと、AniList は「何にも当てはまらない」条件として扱いうるので、
+	// 空の条件は変数ごと省いて null にする（Search が search:"" で 0 件になるのと同じ事情）
+	if q := strings.TrimSpace(f.Query); q != "" {
+		vars["search"] = q
+	}
+	omitEmpty(vars, "genres", f.Genres)
+	omitEmpty(vars, "excludedGenres", f.ExcludedGenres)
+	omitEmpty(vars, "excludedTags", f.ExcludedTags)
+	if len(f.Tags) > 0 {
+		vars["tags"] = f.Tags
+		// 下限は「このタグで絞る」ときのためのもの。除外タグだけのときにも効くかは確かめていないので、
+		// 絞るときだけ付ける
+		vars["minimumTagRank"] = filterMinimumTagRank
+	}
+	return vars
+}
+
+func omitEmpty(vars map[string]any, key string, values []string) {
+	if len(values) > 0 {
+		vars[key] = values
+	}
+}
