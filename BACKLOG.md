@@ -637,6 +637,47 @@ AniList ID と MAL ID を確定的に対応付けられるので、ここに AI 
 - **`OptionalUser` は Cookie があるとき毎回セッションを DB で引く。** `/api/translate` は
   モーダルを開くたびに 1 回なので問題にしていない
 
+#### 9-b・9-c の共通部分 — **実装（2026-10-24）**
+
+9-b と 9-c を別々のワークツリーで並列に進められるよう、両方が使うものを先に入れた。
+
+9-b・9-c から使うもの:
+
+- **AI の呼び出し: `internal/claude` の `(*Client).generate`（非公開）。** 用途ごとに
+  `internal/claude/<用途>.go` を新しく作り、そこにプロンプト・スキーマ・usecase のインターフェースを
+  満たすメソッドを書く（`translate.go` が見本）。日次上限・`stop_reason`・タグ名の漏れの検出は
+  `generate` がやるので、用途側では書かない。入力を囲んだタグ名は `request.promptTags` に渡す
+- **Claude のクライアントは `main.go` の `claudeClient` を使う。** 新しく `claude.NewClient` を
+  作らない（日次上限がその数だけ緩む）。API キーが無ければ nil なので、`aiTranslator` と同じく
+  nil のときはインターフェースに入れずに渡す
+- **ジャンル・タグの一覧: `main.go` の `taxonomyUsecase`（`internal/usecase/taxonomy`）の `Get`。**
+  AniList の `GenreCollection` と `MediaTagCollection` を 1 本で取り、24 時間キャッシュする。
+  成人向けは除いてある。各 usecase は `Get(ctx) (anilist.Taxonomy, error)` のインターフェースを
+  自分で定義して受け取る。**`main.go` の `_ = taxonomyUsecase` は消さない**（両方が消すと衝突する。
+  両方のマージ後に消す）
+- **AniList の条件検索: `anilist.(*Client).SearchByFilter(ctx, anilist.Filter)`。** ジャンル・タグ・
+  除外ジャンル・除外タグ・キーワードで人気順に 30 件。空の条件は無視される
+
+決めたこと:
+
+- **思考オフ・effort `low`・構造化出力を全用途で固定にした。** 9-a の比較で構造化出力なら
+  思考の有無で差が無かったため。9-c の並べ替えで質が足りなければ、そのとき `request` に足す
+- **タグ名の検出は出力の全部の文字列に対して行う。** 9-c の理由の文も画面に出るため
+- **日次上限にはプロンプトキャッシュの読み書きのトークンも数える。** 単価は違うが上限の目安としては足りる
+- **タグ検索では作品に付いたタグの当てはまり度（`minimumTagRank`）が 60 以上のものに絞る。**
+  下限が無いと、料理が 1 話出るだけの作品まで "Cooking" で引っかかる
+- **タグ一覧は起動時に温めない。** 起動直後の AniList の枠は `home-cache-warm` が使う。
+  使うのはログイン済みの利用者が AI の機能を使ったときだけ
+
+残っている穴（9-b・9-c の着手時に確かめる）:
+
+- **`genre_in` / `tag_in` に複数渡したときに AND か OR か確かめていない。** 既存の `byGenresQuery` の
+  コメントは「いずれか」としている。AND なら、AI が条件を盛りすぎると 0 件になる
+- **`minimumTagRank` 60 は仮の値で、実際の検索結果では確かめていない**
+- **タグ（400 件前後）を enum に入れたスキーマが構造化出力の制限に収まるか確かめていない。**
+  収まらなければ、カテゴリで絞る・スポイラーのタグを除くなどで減らす
+- プロンプトキャッシュが効くかは未確認（下の「残っている穴」のとおり）
+
 #### 9-b. 自然文検索
 
 「異世界で料理する漫画」→ Claude が `{genres, tags, mediaType, query}` に変換 → AniList で検索。
