@@ -705,6 +705,45 @@ aws ecs describe-task-definition --task-definition \
 > 本番に載っておらず、ECS はそれでも正常に動くので気付けない。出力のタグが
 > `git rev-parse --short main` と一致しなければ、デプロイはできていない。
 
+### AI 翻訳（Claude）の API キーを入れる（一度だけ）
+
+`ANTHROPIC_API_KEY` が無くてもアプリは動く（起動ログに `ai translate: disabled` が出て、
+翻訳は従来どおり MyMemory だけになる）。AI 翻訳を有効にするときに 1 回だけ行う。
+
+**先に Anthropic Console で月の利用上限（Spend limit）を設定しておく。** アプリ側の日次上限
+（`CLAUDE_DAILY_TOKEN_LIMIT`、既定 200 万トークン）はプロセス内のメモリにあり、
+再起動で 0 に戻る。最後に費用を止めるのは Console 側の上限（BACKLOG 9「残っている穴」）。
+
+```bash
+# 履歴にキーを残さないよう、ファイル経由で入れる
+aws ssm put-parameter --name /amt/prod/ANTHROPIC_API_KEY --type SecureString \
+  --value "$(cat /tmp/anthropic-key.txt)"
+rm /tmp/anthropic-key.txt
+
+# タスク定義の secrets に足して再登録する（jq なので何度流しても重複しない）
+aws ecs describe-task-definition --task-definition anime-manga-tracker \
+  --query 'taskDefinition' --output json \
+  | jq --arg arn "arn:aws:ssm:${AWS_REGION}:${ACCOUNT_ID}:parameter/amt/prod/ANTHROPIC_API_KEY" '
+      del(.taskDefinitionArn,.revision,.status,.requiresAttributes,
+          .compatibilities,.registeredAt,.registeredBy,.deregisteredAt)
+      | .containerDefinitions[0].secrets |=
+          ( map(select(.name != "ANTHROPIC_API_KEY"))
+            + [{name:"ANTHROPIC_API_KEY",valueFrom:$arn}] )
+    ' > /tmp/amt-taskdef.json
+jq '.containerDefinitions[0].secrets' /tmp/amt-taskdef.json
+aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
+
+aws ecs update-service --cluster amt-cluster --service amt-service \
+  --task-definition anime-manga-tracker
+aws ecs wait services-stable --cluster amt-cluster --services amt-service
+aws logs tail /ecs/anime-manga-tracker --since 5m | grep 'ai translate'
+# ai translate: enabled (daily limit 2000000 tokens)
+```
+
+- **IAM の変更は要らない。** Step 6-1 のインラインポリシーが `parameter/amt/prod/*` を許可している
+- **`environment` には書かない。** タスク定義は IAM さえあれば誰でも読める（Step 4 と同じ理由）
+- 日次上限を変えたいときは `environment` に `CLAUDE_DAILY_TOKEN_LIMIT` を足す（秘密ではない）
+
 ### 実行中のコンテナに入る（ECS Exec）
 
 ```bash

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/anilist"
+	"github.com/hatodayo30/anime-manga-tracker/internal/claude"
 	"github.com/hatodayo30/anime-manga-tracker/internal/config"
 	"github.com/hatodayo30/anime-manga-tracker/internal/handler"
 	"github.com/hatodayo30/anime-manga-tracker/internal/infrastructure/postgres"
@@ -71,22 +72,32 @@ func run() error {
 	homeHandler := handler.NewHomeHandler(homeUsecase)
 	airingUsecase := airing.NewUsecase(recordRepo, anilistClient)
 
-	translateClient := translate.NewClient()
-	translateUsecase := translateusecase.NewUsecase(translateClient)
+	// API キーが無い環境では AI 翻訳を組み込まない。nil の Gateway を usecase に渡すと MyMemory だけで動く。
+	// （*claude.Client の nil をそのまま渡すと、インターフェースとしては nil にならないので分岐で渡し分ける）
+	var aiTranslator translateusecase.Gateway
+	if cfg.AnthropicAPIKey != "" {
+		aiTranslator = claude.NewClient(cfg.AnthropicAPIKey, claude.NewBudget(cfg.ClaudeDailyTokenLimit, time.Now))
+		log.Printf("ai translate: enabled (daily limit %d tokens)", cfg.ClaudeDailyTokenLimit)
+	} else {
+		log.Printf("ai translate: disabled (ANTHROPIC_API_KEY is not set)")
+	}
+	translateUsecase := translateusecase.NewUsecase(
+		postgres.NewTranslationRepository(pool), aiTranslator, translate.NewClient())
 	translateHandler := handler.NewTranslateHandler(translateUsecase)
 
 	healthHandler := handler.NewHealthHandler(pool)
 
 	e := handler.NewRouter(handler.Handlers{
-		Record:      recordHandler,
-		Auth:        authHandler,
-		Search:      searchHandler,
-		Home:        homeHandler,
-		Translate:   translateHandler,
-		Health:      healthHandler,
-		RequireUser: authMiddleware.RequireUser,
-		WebDir:      "frontend/dist",
-		TrustProxy:  cfg.TrustProxy,
+		Record:       recordHandler,
+		Auth:         authHandler,
+		Search:       searchHandler,
+		Home:         homeHandler,
+		Translate:    translateHandler,
+		Health:       healthHandler,
+		RequireUser:  authMiddleware.RequireUser,
+		OptionalUser: authMiddleware.OptionalUser,
+		WebDir:       "frontend/dist",
+		TrustProxy:   cfg.TrustProxy,
 	})
 
 	waitJobs := scheduler.New(
