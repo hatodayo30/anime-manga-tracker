@@ -77,3 +77,23 @@ export interface UpdateRecordInput {
   rating?: number
   memo?: string
 }
+
+// GET /api/search/natural（自然文検索、BACKLOG 9-b）で AI が作った検索条件。
+// genres / tags は AniList の英語名のまま。mediaType は文で種別を指定したときだけ入る。
+export interface NaturalSearchConditions {
+  mediaType?: MediaKind
+  genres: string[]
+  tags: string[]
+  excludedGenres: string[]
+  excludedTags: string[]
+  query: string
+}
+
+// GET /api/search/natural の応答。AI が使えないときも 200 で従来の検索結果が返り、fallback に理由が入る。
+// mediaType は実際に検索した種別で、画面で選んでいる種別と違うことがある。
+export interface NaturalSearchResult {
+  mediaType: MediaKind
+  conditions: NaturalSearchConditions | null
+  fallback?: 'unavailable' | 'failed' | 'no_conditions'
+  items: AniListItem[]
+}

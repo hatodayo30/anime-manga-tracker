@@ -21,6 +21,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/airing"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/nlsearch"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/recommend"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/search"
@@ -101,6 +102,14 @@ func run() error {
 		postgres.NewTranslationRepository(pool), aiTranslator, translate.NewClient())
 	translateHandler := handler.NewTranslateHandler(translateUsecase)
 
+	// 自然文検索（9-b）。aiTranslator と同じく、nil の *claude.Client をインターフェースに入れない
+	var aiSearchParser nlsearch.AIGateway
+	if claudeClient != nil {
+		aiSearchParser = claudeClient
+	}
+	nlsearchUsecase := nlsearch.NewUsecase(aiSearchParser, taxonomyUsecase, anilistClient, searchUsecase)
+	nlsearchHandler := handler.NewNLSearchHandler(nlsearchUsecase)
+
 	// AI のおすすめ（9-c）。aiTranslator と同じく、キーが無いときは nil のインターフェースを渡し、
 	// ジャンルベースのおすすめだけで動かす
 	var aiRecommender recommend.AIGateway
@@ -124,6 +133,7 @@ func run() error {
 		OptionalUser: authMiddleware.OptionalUser,
 		WebDir:       "frontend/dist",
 		TrustProxy:   cfg.TrustProxy,
+		NLSearch:     nlsearchHandler,
 	})
 
 	waitJobs := scheduler.New(

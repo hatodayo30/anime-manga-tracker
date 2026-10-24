@@ -3,6 +3,7 @@ import type {
   LibraryRecord,
   Me,
   MangaRankingItem,
+  NaturalSearchResult,
   NewRecordInput,
   RelatedWork,
   UpdateRecordInput,
@@ -42,8 +43,8 @@ export const api = {
     request<LibraryRecord>(`/records/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteRecord: (id: number) => request<null>(`/records/${id}`, { method: 'DELETE' }),
 
-  searchAniList: ({ type, q = '' }: { type: MediaKind; q?: string }) =>
-    request<AniListItem[]>('/search' + buildQuery({ type, q })),
+  searchAniList: ({ type, q = '', signal }: { type: MediaKind; q?: string; signal?: AbortSignal }) =>
+    request<AniListItem[]>('/search' + buildQuery({ type, q }), { signal }),
   mediaByIds: ({ type, ids }: { type: MediaKind; ids: number[] }) => {
     if (ids.length === 0) return Promise.resolve<AniListItem[]>([])
     return request<AniListItem[]>('/anilist/media' + buildQuery({ type, ids: ids.join(',') }))
@@ -53,6 +54,9 @@ export const api = {
     if (genres.length === 0) return Promise.resolve<AniListItem[]>([])
     return request<AniListItem[]>('/recommendations' + buildQuery({ type, genres: genres.join(',') }))
   },
+  // 自然文検索（BACKLOG 9-b）。ログイン必須で、未ログインは 401（'login required'）になる。
+  naturalSearch: ({ type, q, signal }: { type: MediaKind; q: string; signal?: AbortSignal }) =>
+    request<NaturalSearchResult>('/search/natural' + buildQuery({ type, q }), { signal }),
   translate: async ({ text, title, target = 'ja' }: { text: string; title?: string; target?: string }) => {
     if (!text) return ''
     const { translated } = await request<{ translated: string }>('/translate', {

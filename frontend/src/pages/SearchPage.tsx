@@ -1,13 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
-import { KindToggle } from '../components/KindToggle'
-import { PosterCard } from '../components/PosterCard'
-import { Thumb } from '../components/Thumb'
+import { useCallback, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useWorkModal } from '../components/WorkModalContext'
-import type { WorkModalItem } from '../components/WorkModalContext'
+import { useAuth } from '../context/AuthContext'
 import { useKind } from '../hooks/useKind'
 import { api } from '../lib/api'
-import { STATUS_LABELS, activateOnKey, containsKana, containsKanji, formatScore, kanaToRomaji, translateGenre } from '../lib/util'
-import type { AniListItem, LibraryRecord } from '../types'
+import { STATUS_LABELS, containsKana, containsKanji, kanaToRomaji, translateGenre } from '../lib/util'
+import type { MediaKind } from '../lib/util'
+import type { AniListItem, LibraryRecord, NaturalSearchResult } from '../types'
+import { SearchPage as SearchScreen } from './search/SearchPage'
+import type { AiConditions, ContentSearchResult, FallbackReason, WorkSummary } from './search/searchTypes'
+
+// 検索・追加画面。見た目と入力の扱いは search/SearchPage.tsx（案8）にあり、ここは API と
+// アプリの状態（種別・ログイン・作品モーダル・ライブラリ）をつなぐだけ。
 
 // 同じ作品（anilistId）を除いた上で、AniListの人気値（popularity）降順にまとめる。
 // ひらがな/カタカナ入力時、元のかな検索とローマ字変換検索の両方を実行して結果をマージするために使う。
@@ -19,251 +23,117 @@ function mergeSearchResultsByPopularity(a: AniListItem[], b: AniListItem[]): Ani
   return Array.from(byId.values()).sort((x, y) => (y.popularity ?? 0) - (x.popularity ?? 0))
 }
 
-type Idle = { kind: 'idle'; tsumi: LibraryRecord[]; trend: AniListItem[]; libraryByAniListId: Map<number, LibraryRecord> }
-type Results = { kind: 'results'; items: AniListItem[]; libraryByAniListId: Map<number, LibraryRecord> }
-type Loading = { kind: 'loading' }
-type ErrorState = { kind: 'error'; message: string }
-type ViewState = Idle | Results | Loading | ErrorState
+function toWorkSummary(item: AniListItem, kind: MediaKind): WorkSummary {
+  return {
+    id: item.anilistId,
+    title: item.title,
+    coverUrl: item.coverImageUrl || null,
+    genres: (item.genres || []).map(translateGenre),
+    kind,
+    source: item,
+  }
+}
+
+const FALLBACK_REASONS: Record<NonNullable<NaturalSearchResult['fallback']>, FallbackReason> = {
+  unavailable: 'ai_unavailable',
+  failed: 'ai_failed',
+  no_conditions: 'no_conditions',
+}
+
+// requested は画面で選んでいた種別。AI は文に種別の指定が無くても種別を返すことがあり、それが画面の種別と
+// 同じなら検索結果は変わらないので、「種別は文から」と出すのは画面の種別と違ったときだけにする。
+function toAiConditions(result: NaturalSearchResult, requested: MediaKind): AiConditions | null {
+  const c = result.conditions
+  if (!c) return null
+  return {
+    kind: result.mediaType,
+    kindFromText: !!c.mediaType && c.mediaType !== requested,
+    genres: c.genres.map(translateGenre),
+    tags: c.tags,
+    excludedGenres: c.excludedGenres.map(translateGenre),
+    excludedTags: c.excludedTags,
+    query: c.query,
+  }
+}
+
+type LibraryByKind = Partial<Record<MediaKind, Map<number, LibraryRecord>>>
 
 export function SearchPage() {
   const [kind, setKind] = useKind()
-  const [query, setQuery] = useState('')
-  const [view, setView] = useState<ViewState>({ kind: 'loading' })
+  const { user, refresh } = useAuth()
+  const navigate = useNavigate()
   const openWorkModal = useWorkModal()
+  // 結果のバッジ（「見た ✓」など）用。内容で探すは文で種別が変わるので種別ごとに持つ
+  const [library, setLibrary] = useState<LibraryByKind>({})
 
-  const isComposingRef = useRef(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const requestSeqRef = useRef(0)
+  const loadLibrary = useCallback(async (mediaType: MediaKind) => {
+    const records = await api.listRecords({ type: mediaType })
+    setLibrary((prev) => ({ ...prev, [mediaType]: new Map(records.map((r) => [r.anilistId, r])) }))
+  }, [])
 
-  const runSearch = (q: string, currentKind: typeof kind) => {
-    const trimmed = q.trim()
-    const seq = ++requestSeqRef.current
-
-    if (trimmed === '') {
-      setView({ kind: 'loading' })
-      Promise.all([api.listRecords({ type: currentKind }), api.searchAniList({ type: currentKind, q: '' })])
-        .then(([libraryRecords, trendResults]) => {
-          if (seq !== requestSeqRef.current) return
-          setView({
-            kind: 'idle',
-            tsumi: libraryRecords.filter((r) => r.status === 'want'),
-            trend: trendResults.slice(0, 5),
-            libraryByAniListId: new Map(libraryRecords.map((r) => [r.anilistId, r])),
-          })
-        })
-        .catch((err) => {
-          if (seq !== requestSeqRef.current) return
-          setView({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
-        })
-      return
-    }
-
-    setView({ kind: 'loading' })
-    const romaji = containsKana(trimmed) && !containsKanji(trimmed) ? kanaToRomaji(trimmed) : null
-    const shouldMergeRomaji = !!romaji && romaji !== trimmed
-
-    Promise.all([
-      api.searchAniList({ type: currentKind, q }),
-      shouldMergeRomaji ? api.searchAniList({ type: currentKind, q: romaji! }) : Promise.resolve([]),
-      api.listRecords({ type: currentKind }),
-    ])
-      .then(([searchResults, romajiResults, libraryRecords]) => {
-        if (seq !== requestSeqRef.current) return
-        const items = shouldMergeRomaji ? mergeSearchResultsByPopularity(searchResults, romajiResults) : searchResults
-        setView({ kind: 'results', items, libraryByAniListId: new Map(libraryRecords.map((r) => [r.anilistId, r])) })
-      })
-      .catch((err) => {
-        if (seq !== requestSeqRef.current) return
-        setView({ kind: 'error', message: err instanceof Error ? err.message : String(err) })
-      })
-  }
-
-  const scheduleSearch = (q: string, currentKind: typeof kind, delayMs = 500) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => runSearch(q, currentKind), delayMs)
-  }
-
-  // マウント時・kind切り替え時は即時検索する。
-  useEffect(() => {
-    runSearch(query, kind)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind])
-
-  const reload = () => runSearch(query, kind)
-
-  return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-4)', marginBottom: 'var(--space-6)', flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0 }}>検索・追加</h2>
-        <KindToggle kind={kind} onChange={setKind} />
-      </div>
-
-      <div className="field" style={{ marginBottom: 'var(--space-6)' }}>
-        <input
-          className="input"
-          type="text"
-          placeholder={kind === 'anime' ? 'アニメを検索' : '漫画を検索'}
-          value={query}
-          onChange={(e) => {
-            const next = e.target.value
-            setQuery(next)
-            if (!isComposingRef.current) scheduleSearch(next, kind)
-          }}
-          onCompositionStart={() => {
-            isComposingRef.current = true
-          }}
-          onCompositionEnd={(e) => {
-            isComposingRef.current = false
-            setQuery(e.currentTarget.value)
-            scheduleSearch(e.currentTarget.value, kind)
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !isComposingRef.current) {
-              if (debounceRef.current) clearTimeout(debounceRef.current)
-              runSearch(query, kind)
-            }
-          }}
-        />
-      </div>
-
-      {view.kind === 'loading' && (
-        <p className="text-muted" style={{ fontSize: 13 }}>
-          読み込み中…
-        </p>
-      )}
-      {view.kind === 'error' && <p className="text-muted">検索に失敗しました: {view.message}</p>}
-      {view.kind === 'results' && (
-        <SearchResults kind={kind} query={query} items={view.items} libraryByAniListId={view.libraryByAniListId} onOpen={(item, record) => openWorkModal({ item, mediaType: kind, record, onChange: reload })} />
-      )}
-      {view.kind === 'idle' && (
-        <IdleState kind={kind} tsumi={view.tsumi} trend={view.trend} libraryByAniListId={view.libraryByAniListId} onOpen={(item, record) => openWorkModal({ item, mediaType: kind, record, onChange: reload })} />
-      )}
-    </>
+  // ライブラリの取得は中断しない（結果を捨てても、次の検索のバッジに使える）
+  const searchByTitle = useCallback(
+    async (q: string, mediaType: MediaKind, signal: AbortSignal) => {
+      const romaji = containsKana(q) && !containsKanji(q) ? kanaToRomaji(q) : null
+      const shouldMergeRomaji = !!romaji && romaji !== q
+      const [searchResults, romajiResults] = await Promise.all([
+        api.searchAniList({ type: mediaType, q, signal }),
+        shouldMergeRomaji ? api.searchAniList({ type: mediaType, q: romaji, signal }) : Promise.resolve([]),
+        loadLibrary(mediaType),
+      ])
+      const items = shouldMergeRomaji ? mergeSearchResultsByPopularity(searchResults, romajiResults) : searchResults
+      return items.map((item) => toWorkSummary(item, mediaType))
+    },
+    [loadLibrary],
   )
-}
 
-function SearchResults({
-  kind,
-  query,
-  items,
-  libraryByAniListId,
-  onOpen,
-}: {
-  kind: 'anime' | 'manga'
-  query: string
-  items: AniListItem[]
-  libraryByAniListId: Map<number, LibraryRecord>
-  onOpen: (item: AniListItem, record: LibraryRecord | null) => void
-}) {
-  if (items.length === 0) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-8) 0' }}>
-        <p className="text-muted" style={{ fontSize: 13, margin: 0 }}>
-          「{query}」に一致する作品が見つかりません。
-        </p>
-      </div>
-    )
-  }
-  return (
-    <>
-      <p className="text-muted" style={{ fontSize: 12, margin: '0 0 var(--space-3)' }}>
-        {items.length}件の作品
-      </p>
-      <div className="poster-grid">
-        {items.map((item) => {
-          const record = libraryByAniListId.get(item.anilistId) || null
-          return (
-            <PosterCard
-              key={item.anilistId}
-              item={item}
-              badgeLabel={record ? `${STATUS_LABELS[kind][record.status]} ✓` : null}
-              caption={(item.genres || []).slice(0, 2).map(translateGenre).join('・')}
-              onClick={() => onOpen(item, record)}
-            />
-          )
-        })}
-      </div>
-    </>
+  // AI の失敗はサーバー側で従来の検索に落ちて 200 が返る。ここで投げるのは、未ログイン（401）か
+  // 従来の検索まで失敗したときだけ。ライブラリは結果の種別が決まってから引く（文で種別が変わりうるため）。
+  const searchByContent = useCallback(
+    async (q: string, mediaType: MediaKind, signal: AbortSignal): Promise<ContentSearchResult> => {
+      let result: NaturalSearchResult
+      try {
+        result = await api.naturalSearch({ type: mediaType, q, signal })
+      } catch (err) {
+        // セッション切れ。ログイン状態を取り直すと ProtectedRoute がログイン画面へ送る
+        if (err instanceof Error && err.message === 'login required') void refresh()
+        throw err
+      }
+      await loadLibrary(result.mediaType)
+      return {
+        works: result.items.map((item) => toWorkSummary(item, result.mediaType)),
+        conditions: toAiConditions(result, mediaType),
+        fallback: result.fallback ? FALLBACK_REASONS[result.fallback] : null,
+      }
+    },
+    [loadLibrary, refresh],
   )
-}
 
-function IdleState({
-  kind,
-  tsumi,
-  trend,
-  libraryByAniListId,
-  onOpen,
-}: {
-  kind: 'anime' | 'manga'
-  tsumi: LibraryRecord[]
-  trend: AniListItem[]
-  libraryByAniListId: Map<number, LibraryRecord>
-  onOpen: (item: WorkModalItem, record: LibraryRecord | null) => void
-}) {
-  const trendTitle = kind === 'anime' ? '今季人気 TOP5' : '人気の漫画 TOP5'
+  const statusLabelFor = (work: WorkSummary) => {
+    const record = library[work.kind]?.get(work.id)
+    return record ? STATUS_LABELS[work.kind][record.status] : null
+  }
+
+  const openWork = (work: WorkSummary) => {
+    openWorkModal({
+      item: work.source,
+      mediaType: work.kind,
+      record: library[work.kind]?.get(work.id) ?? null,
+      // 追加・変更したらバッジを直す。検索はやり直さない（AI をもう一度呼ばないため）
+      onChange: () => void loadLibrary(work.kind).catch(() => {}),
+    })
+  }
+
   return (
-    <>
-      <div className="shelf">
-        <h5 className="shelf-h" style={{ marginBottom: 4 }}>
-          積み作品
-        </h5>
-        <p className="text-muted shelf-desc">「見たい・読みたい」に入れたまま手をつけていない作品</p>
-        {tsumi.length === 0 ? (
-          <p className="text-muted" style={{ fontSize: 13 }}>
-            積み作品はありません。
-          </p>
-        ) : (
-          <div className="poster-grid">
-            {tsumi.map((r) => (
-              <PosterCard key={r.id} item={r} onClick={() => onOpen(r, r)} />
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="shelf">
-        <h5 className="shelf-h">{trendTitle}</h5>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 640 }}>
-          {trend.map((item, i) => {
-            const record = libraryByAniListId.get(item.anilistId) || null
-            const score = formatScore(item.score)
-            return (
-              <div
-                key={item.anilistId}
-                className="card elev-sm"
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-3)', padding: '9px var(--space-3)', cursor: 'pointer' }}
-                onClick={() => onOpen(item, record)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={activateOnKey(() => onOpen(item, record))}
-              >
-                <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 16, color: 'var(--color-accent)', width: 18, flex: 'none' }}>
-                  {i + 1}
-                </span>
-                <Thumb item={item} width="32px" height="42px" fontSize={13} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="card-title" style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {item.title}
-                  </div>
-                  <div className="text-muted" style={{ fontSize: 11, marginTop: 2 }}>
-                    {(item.genres || []).slice(0, 2).map(translateGenre).join('・')}
-                  </div>
-                </div>
-                {record && (
-                  <span className="tag tag-accent" style={{ flex: 'none' }}>
-                    {STATUS_LABELS[kind][record.status]} ✓
-                  </span>
-                )}
-                {score && (
-                  <span className="text-muted" style={{ fontSize: 12, flex: 'none' }}>
-                    ★{score}
-                  </span>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </>
+    <SearchScreen
+      kind={kind}
+      onKindChange={setKind}
+      isLoggedIn={!!user}
+      onLoginClick={() => navigate('/login?next=%2Fsearch')}
+      searchByTitle={searchByTitle}
+      searchByContent={searchByContent}
+      onOpenWork={openWork}
+      statusLabelFor={statusLabelFor}
+    />
   )
 }
