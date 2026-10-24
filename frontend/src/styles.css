@@ -270,3 +270,21 @@ button.seg-opt { border: none; background: none; font: inherit; color: inherit; 
   display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50;
 }
 .dialog-banner { height: 120px; }
+
+/* — synopsis skeleton (detail dialog) — */
+/* 1 行の高さは本文（13px × line-height 1.75）に合わせ、訳が出たときに高さが跳ねないようにする */
+.synopsis-skeleton { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+.synopsis-skeleton span {
+  display: block; height: 17px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--color-neutral-900) 0%, var(--color-neutral-800) 50%, var(--color-neutral-900) 100%);
+  background-size: 200% 100%;
+  animation: synopsis-shimmer 1.4s ease-in-out infinite;
+}
+.synopsis-skeleton span:last-child { width: 60%; }
+@keyframes synopsis-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .synopsis-skeleton span { animation: none; }
+}

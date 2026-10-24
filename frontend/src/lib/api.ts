@@ -53,11 +53,11 @@ export const api = {
     if (genres.length === 0) return Promise.resolve<AniListItem[]>([])
     return request<AniListItem[]>('/recommendations' + buildQuery({ type, genres: genres.join(',') }))
   },
-  translate: async ({ text, target = 'ja' }: { text: string; target?: string }) => {
+  translate: async ({ text, title, target = 'ja' }: { text: string; title?: string; target?: string }) => {
     if (!text) return ''
     const { translated } = await request<{ translated: string }>('/translate', {
       method: 'POST',
-      body: JSON.stringify({ text, target }),
+      body: JSON.stringify({ text, title, target }),
     })
     return translated
   },

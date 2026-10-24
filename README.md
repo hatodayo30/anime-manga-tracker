@@ -90,6 +90,8 @@ Vite のプロキシ先ポートは `BACKEND_PORT` → `PORT` → `8080` の順�
 | `DATABASE_URL` | ✓ | — | PostgreSQL 接続文字列 |
 | `PORT` | | `8080` | API サーバーの待ち受けポート |
 | `COOKIE_SECURE` | | `false` | セッション Cookie に `Secure` を立てるか。HTTPS でアクセスする環境では `true` |
+| `ANTHROPIC_API_KEY` | | — | AI 翻訳（Claude）の API キー。未設定ならあらすじの翻訳は MyMemory だけで動く |
+| `CLAUDE_DAILY_TOKEN_LIMIT` | | `2000000` | Claude に 1 日（JST）で使ってよいトークン数。超えたら MyMemory に落とす |
 
 ローカルでは `.env` が読み込まれます（無くてもエラーにはなりません）。本番では実際の環境変数を使う想定です。
 

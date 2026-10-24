@@ -9,14 +9,15 @@ import (
 
 // Handlers はルーティングに必要なハンドラ・ミドルウェア一式をまとめたもの。
 type Handlers struct {
-	Record      *RecordHandler
-	Auth        *AuthHandler
-	Search      *SearchHandler
-	Home        *HomeHandler
-	Translate   *TranslateHandler
-	Health      *HealthHandler
-	RequireUser echo.MiddlewareFunc
-	WebDir      string
+	Record       *RecordHandler
+	Auth         *AuthHandler
+	Search       *SearchHandler
+	Home         *HomeHandler
+	Translate    *TranslateHandler
+	Health       *HealthHandler
+	RequireUser  echo.MiddlewareFunc
+	OptionalUser echo.MiddlewareFunc
+	WebDir       string
 
 	// TrustProxy はレート制限のキーにするクライアント IP を X-Forwarded-For から取るかどうか。
 	// 判断の理由は config.Config.TrustProxy を参照。
@@ -136,7 +137,8 @@ func NewRouter(h Handlers) *echo.Echo {
 	e.GET("/api/home/season-anime", h.Home.SeasonAnime, publicAPILimit)
 	e.GET("/api/home/trending", h.Home.Trending, publicAPILimit)
 	e.GET("/api/home/trending-manga", h.Home.TrendingManga, publicAPILimit)
-	e.POST("/api/translate", h.Translate.Translate, publicAPILimit)
+	// translate は未ログインでも使えるが、ログイン済みなら AI 翻訳を使うので利用者を解決しておく
+	e.POST("/api/translate", h.Translate.Translate, publicAPILimit, h.OptionalUser)
 
 	// login は全体の制限に加えて専用の厳しい制限を重ねる（全体の 1 本としても数える）。
 	// signup も bcrypt を回すが、BACKLOG 4-b で閉じる前提なので全体の制限だけにしている。

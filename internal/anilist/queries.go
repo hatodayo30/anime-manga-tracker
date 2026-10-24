@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 )
@@ -34,6 +35,7 @@ const mediaFields = `
       id
       idMal
       title { romaji native english }
+      synonyms
       coverImage { medium }
       genres
       episodes
@@ -85,6 +87,7 @@ type media struct {
 	ID                int                `json:"id"`
 	IDMal             *int               `json:"idMal"`
 	Title             mediaTitle         `json:"title"`
+	Synonyms          []string           `json:"synonyms"`
 	CoverImage        mediaCoverImage    `json:"coverImage"`
 	Genres            []string           `json:"genres"`
 	Episodes          *int               `json:"episodes"`
@@ -150,6 +153,7 @@ query ($id: Int) {
           idMal
           type
           title { romaji native english }
+          synonyms
           coverImage { medium }
           countryOfOrigin
         }
@@ -183,6 +187,7 @@ type relationNode struct {
 	IDMal           *int            `json:"idMal"`
 	Type            string          `json:"type"`
 	Title           mediaTitle      `json:"title"`
+	Synonyms        []string        `json:"synonyms"`
 	CoverImage      mediaCoverImage `json:"coverImage"`
 	CountryOfOrigin string          `json:"countryOfOrigin"`
 }
@@ -210,22 +215,46 @@ func (c *Client) Relations(ctx context.Context, id int64) ([]RelatedWork, error)
 	works := make([]RelatedWork, 0, len(resp.Media.Relations.Edges))
 	for _, edge := range resp.Media.Relations.Edges {
 		node := edge.Node
-		var title string
-		if node.CountryOfOrigin == "" || node.CountryOfOrigin == "JP" {
-			title = firstNonEmpty(node.Title.Native, node.Title.Romaji, node.Title.English)
-		} else {
-			title = firstNonEmpty(node.Title.English, node.Title.Romaji, node.Title.Native)
-		}
-
 		works = append(works, RelatedWork{
 			AniListID:     int64(node.ID),
-			Title:         title,
+			Title:         displayTitle(node.Title, node.Synonyms, node.CountryOfOrigin),
 			CoverImageURL: node.CoverImage.Medium,
 			MediaType:     strings.ToLower(node.Type),
 			RelationType:  edge.RelationType,
 		})
 	}
 	return works, nil
+}
+
+// displayTitle は日本語 UI に出す作品名を選ぶ。
+//
+// native は原語表記のため、日本作品なら漢字/かな、韓国・中国作品ならハングル/簡体字になる。
+// ハングル/簡体字は日本語 UI では判読できないので、日本作品のときだけ native を優先する。
+//
+// 韓国・中国作品は、別名（synonyms）に日本語版のタイトルがあればそれを使う。AniList には
+// 日本語タイトルの欄が無いが、"Solo Leveling" の別名に「俺だけレベルアップな件」が入っている
+// ように、日本で出版・放送された作品は別名に載っていることが多い。無ければ広く読める英語を使う。
+func displayTitle(t mediaTitle, synonyms []string, countryOfOrigin string) string {
+	if countryOfOrigin == "" || countryOfOrigin == "JP" {
+		return firstNonEmpty(t.Native, t.Romaji, t.English)
+	}
+	return firstNonEmpty(japaneseSynonym(synonyms), t.English, t.Romaji, t.Native)
+}
+
+// japaneseSynonym は別名のうち、かなを含む最初のものを返す。
+//
+// かなを条件にするのは、漢字だけの別名は中国語（"神之塔" など）と見分けられないため。
+// 別名は AniList の利用者が登録する値で並び順に意味は無いが、日本語の別名が複数あることは
+// まれなので最初のものを採る。
+func japaneseSynonym(synonyms []string) string {
+	for _, s := range synonyms {
+		for _, r := range s {
+			if unicode.In(r, unicode.Hiragana, unicode.Katakana) {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 func firstNonEmpty(values ...string) string {
@@ -250,16 +279,7 @@ func cleanSynopsis(desc *string) string {
 func toSearchResults(mediaType domain.MediaType, list []media) []SearchResult {
 	results := make([]SearchResult, 0, len(list))
 	for _, m := range list {
-		// native は原語表記のため、日本作品なら漢字/かな、韓国・中国作品なら
-		// ハングル/簡体字になる。この場合、native (ハングル/簡体字) → 日本語UIでは
-		// 判読できないため、日本作品のときだけ native を優先し、それ以外（KR/CN等）は
-		// 広く読める英語タイトルを優先する。
-		var title string
-		if m.CountryOfOrigin == "" || m.CountryOfOrigin == "JP" {
-			title = firstNonEmpty(m.Title.Native, m.Title.Romaji, m.Title.English)
-		} else {
-			title = firstNonEmpty(m.Title.English, m.Title.Romaji, m.Title.Native)
-		}
+		title := displayTitle(m.Title, m.Synonyms, m.CountryOfOrigin)
 		// 進捗の追跡単位はアニメが話数、漫画が巻数。漫画の chapters は AniList 上の
 		// 話数だが、読了記録は巻単位で付けるため total には volumes を入れる。
 		total := m.Episodes

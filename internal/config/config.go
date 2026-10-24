@@ -30,6 +30,16 @@ type Config struct {
 	// false のまま ALB の裏に置いても全員が ALB の IP で 1 つのバケットを共有するだけで
 	// 回避はされないが、正当な利用者同士で 429 を踏み合う。
 	TrustProxy bool
+
+	// AnthropicAPIKey は AI 翻訳（Claude）の API キー。空なら AI を使わず、従来どおり
+	// MyMemory だけで動く（ローカル開発・CI・キーを SSM に入れる前の本番）。
+	// 本物の秘密なので、本番では DATABASE_URL と同じく SSM から secrets で渡す。
+	AnthropicAPIKey string
+
+	// ClaudeDailyTokenLimit はプロセス全体で 1 日（JST）に Claude へ使ってよいトークン数。
+	// 既定の 200 万は、Haiku 5.5 で全部が出力トークン（$0.50/MTok）だったとしても 1 日 $1。
+	// 翻訳 1 回は数千トークンなので、正当な利用で数百作品ぶんに相当し、普段は届かない。
+	ClaudeDailyTokenLimit int64
 }
 
 // Load は .env（存在すれば）と環境変数から設定を読み込む。
@@ -47,11 +57,19 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	claudeDailyTokenLimit, err := getEnvInt64("CLAUDE_DAILY_TOKEN_LIMIT", 2_000_000)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Port:         getEnv("PORT", "8080"),
 		DatabaseURL:  os.Getenv("DATABASE_URL"),
 		CookieSecure: cookieSecure,
 		TrustProxy:   trustProxy,
+
+		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
+		ClaudeDailyTokenLimit: claudeDailyTokenLimit,
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -81,4 +99,18 @@ func getEnvBool(key string, fallback bool) (bool, error) {
 		return false, fmt.Errorf("%s must be a boolean (got %q)", key, v)
 	}
 	return b, nil
+}
+
+// getEnvInt64 は正の整数の環境変数を読む。getEnvBool と同じ理由で、解釈できない値はエラーにする
+// （上限の綴り間違いで黙って既定値に戻ると、絞ったつもりの費用上限が効いていないことに気付けない）。
+func getEnvInt64(key string, fallback int64) (int64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer (got %q)", key, v)
+	}
+	return n, nil
 }

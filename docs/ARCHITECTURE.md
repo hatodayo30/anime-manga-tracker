@@ -38,7 +38,7 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 | バックエンド | Go 1.25 / Echo v4 / pgx v5 |
 | フロントエンド | React 19 / TypeScript / Vite / React Router v7 |
 | DB | PostgreSQL 16 |
-| 外部 API | AniList (GraphQL) / Jikan (MyAnimeList) / MyMemory Translation |
+| 外部 API | AniList (GraphQL) / Jikan (MyAnimeList) / Claude (Anthropic) / MyMemory Translation |
 | CI | GitHub Actions（gofmt・go vet・go build / oxlint・tsc・vite build） |
 
 レイヤは handler → usecase → repository / gateway の 3 層で、向きは常に内側を向く。
@@ -61,7 +61,7 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 │ pgx v5 / 起動時マイグレーション │  │ レート制限つきクライアント      │
 └───────────────┬───────────────┘  └───────────────┬───────────────┘
                 v                                  v
-         PostgreSQL 16                 AniList / Jikan / MyMemory
+         PostgreSQL 16            AniList / Jikan / Claude / MyMemory
 ```
 
 入口は HTTP リクエストと定期ジョブの 2 つで、どちらも同じ usecase を通る。
@@ -79,7 +79,8 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 | `internal/infrastructure/postgres/` | pgx によるリポジトリ実装、接続プール、マイグレーションランナー |
 | `internal/anilist/` | AniList GraphQL クライアントとクエリ定義。トークンバケットでレート制御 |
 | `internal/jikan/` | Jikan (MyAnimeList) クライアント。最小リクエスト間隔でレート制御 |
-| `internal/translate/` | MyMemory 翻訳クライアント。文単位のチャンク分割を含む |
+| `internal/claude/` | Claude API クライアント（AI 翻訳）と、プロセス全体の日次トークン上限 |
+| `internal/translate/` | MyMemory 翻訳クライアント（AI 翻訳のフォールバック）。文単位のチャンク分割を含む |
 | `migrations/` | `NNNN_name.up.sql` / `.down.sql` の組と `embed.FS` |
 | `frontend/` | React + Vite。`src/pages` / `src/components` / `src/context` / `src/hooks` / `src/lib` |
 
@@ -143,7 +144,9 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 
 1. `/api/anilist/media` — 総話数・放送状況の最新化
 2. `/api/anilist/relations` — 関連作品（続編・前日譚・スピンオフ）
-3. `/api/translate` — あらすじを日本語へ機械翻訳
+3. `/api/translate` — あらすじを日本語へ翻訳（保存済みの AI 翻訳 → ログイン済みなら Claude → MyMemory の順）。
+   作品名（`title`）も送り、Claude に作品名の表記を合わせさせる。訳が届くまで本文はスケルトンにし、
+   6 秒待っても届かなければ原文を出して、届いた時点で差し替える
 
 取得した `total` が保存済みの値とズレていれば、その場で PATCH して DB を同期する。
 ライブラリ画面の進捗バーと「全巻読了で done へ」の判定は DB の値だけを見るためで、
@@ -170,7 +173,8 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 | --- | --- | --- |
 | AniList (GraphQL) | 検索・シーズン一覧・人気ランキング・関連作品・ID 一括取得 | トークンバケット（2.5 秒に 1 個回復、バースト 5） |
 | Jikan (MyAnimeList) | MAL ランキング・会員数・掲載誌、検索のフォールバック | 全呼び出しで最小リクエスト間隔 350ms を共有 |
-| MyMemory | あらすじの日本語訳 | 1 リクエスト 450 バイト以下に文単位で分割 |
+| Claude (Haiku 5.5) | あらすじの日本語訳（ログイン済みのみ） | プロセス全体の日次トークン上限（`CLAUDE_DAILY_TOKEN_LIMIT`）。結果は `translations` に保存し、同じ原文では呼ばない |
+| MyMemory | あらすじの日本語訳（Claude のフォールバック） | 1 リクエスト 450 バイト以下に文単位で分割 |
 
 ### AniList のトークンバケット
 
@@ -395,6 +399,7 @@ Vite のプロキシ先ポートは `BACKEND_PORT` → `PORT` → `8080` の順�
 | `/api/anilist/media` の `ids` | 100 件 |
 | `/api/search` の `q` | 100 文字 |
 | `/api/translate` の `text` | 4500 バイト |
+| `/api/translate` の `title` | 300 バイト |
 | `/api/recommendations` の `genres` | 20 件 / 400 文字 |
 | ボディ全体 | 64K（`middleware.BodyLimit`） |
 | 未認証 `/api/*` | 2 req/秒・バースト 30（IP 単位） |
@@ -425,8 +430,10 @@ stale-while-revalidate とウォームアップの価値はむしろ上がった
 - **水平スケールできない**。キャッシュ・single-flight・トークンバケット・スケジューラが
   全部プロセス内。ElastiCache 等に出すまで解禁しない
 - **表示言語をサーバーが決め打ちしている**。日本作品は native 優先、韓国・中国作品は
-  english 優先のフォールバックが固定
-- **あらすじの翻訳は毎回オンデマンド**。モーダルを開くたびに MyMemory を叩いており、
-  キャッシュも永続化もしていない
+  別名（synonyms）のうちかなを含むもの → english の順が固定。別名に日本語タイトルが無い作品
+  （"Tower of God" など）は英語のまま
+- **AI 翻訳だけが永続化される**。Claude の訳は `translations`（原文と作品名から作ったハッシュ + 翻訳先言語）に
+  保存して誰にでも返すが、MyMemory の訳は保存しない。未ログインで未保存の作品を開くと、
+  毎回 MyMemory を叩く
 - **セッションの期限切れ行が残る**。`sessions` を掃除するジョブはない
   （スケジューラ基盤はあるので、乗せるのは容易）
