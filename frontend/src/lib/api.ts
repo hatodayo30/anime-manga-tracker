@@ -77,4 +77,9 @@ export const api = {
   signup: (body: { email: string; password: string }) =>
     request<Me>('/auth/signup', { method: 'POST', body: JSON.stringify(body) }),
   logout: () => request<null>('/auth/logout', { method: 'POST' }),
+
+  // ホームの「AI のおすすめ」（BACKLOG 9-c、ログイン必須）。source が 'genre' のときは記録が少ないか
+  // AI が使えなかったときのジャンルベースのおすすめで、reason は付かない。
+  aiRecommendations: ({ type }: { type: MediaKind }) =>
+    request<{ source: 'ai' | 'genre'; items: (AniListItem & { reason?: string })[] }>('/recommendations/ai' + buildQuery({ type })),
 }
