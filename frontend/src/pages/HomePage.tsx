@@ -530,7 +530,7 @@ function AIRecommendShelf({ kind, library, onOpen }: { kind: MediaKind; library:
       <div className="shelf-head">
         <h5 className="shelf-h">AI のおすすめ</h5>
       </div>
-      {result?.source === 'genre' && (
+      {result?.source === 'genre' && items.length > 0 && (
         <p className="text-muted shelf-desc">今はよく見ているジャンルから選んでいます。記録や評価が増えると、AI が理由付きで選びます。</p>
       )}
       {failed ? (
