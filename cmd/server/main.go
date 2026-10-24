@@ -21,6 +21,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/airing"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/housekeeping"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/nlsearch"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/recommend"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
@@ -150,6 +151,13 @@ func run() error {
 			Name:     "next-airing-sync",
 			Interval: airing.SyncInterval,
 			Run:      airingUsecase.Sync,
+		},
+		// 期限切れのセッションなど、DB に溜まり続ける行を片付ける（BACKLOG 4-d）。
+		// 8-a のゲストアカウント削除もこのジョブに相乗りさせる予定（usecase/housekeeping を参照）。
+		scheduler.Job{
+			Name:     "housekeeping",
+			Interval: housekeeping.Interval,
+			Run:      housekeeping.NewUsecase(postgres.NewHousekeepingRepository(pool)).Run,
 		},
 	).Start(ctx)
 

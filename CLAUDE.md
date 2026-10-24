@@ -70,7 +70,7 @@ ECS は `desiredCount: 1` 固定。この前提を崩す変更は BACKLOG で設
   触らない。更新するとライブラリの「最近更新した順」が定期ジョブで塗り替わる。
 - **ユーザースコープはリポジトリの SQL で強制する** — `WHERE ... AND user_id = $N`。
   他人のレコードは `ErrNotFound` にし、存在しないのか他人のものなのかを区別しない。
-  例外は `airing.Repository` だけで、定期ジョブが保守のために全ユーザーを横断する。
+  例外は `airing.Repository` と `housekeeping.Repository` で、定期ジョブが保守のために全ユーザーを横断する。
   **ユーザースコープされない操作は、それと分かるようインターフェースを分ける。**
 - **`ORDER BY` 句は SQL に直接埋め込んでいる**（`orderByClauses` map）。
   map に定義済みのキー以外は絶対にクエリへ渡さない。

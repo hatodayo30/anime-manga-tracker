@@ -47,6 +47,7 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 ┌─ internal/handler ────────────┐  ┌─ internal/scheduler ──────────┐
 │ ルーティング・認証ミドルウェア │  │ 8 分ごと  home-cache-warm      │
 │ 静的ファイル配信（SPA）        │  │ 30 分ごと next-airing-sync     │
+│                                │  │ 1 時間ごと housekeeping        │
 └───────────────┬───────────────┘  └───────────────┬───────────────┘
                 v                                  v
 ┌─ internal/usecase ────────────────────────────────────────────────┐
@@ -72,7 +73,7 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 | --- | --- |
 | `cmd/server/` | エントリポイント。DI の配線、マイグレーション実行、HTTP サーバーとスケジューラの起動・停止 |
 | `internal/domain/` | ドメインモデルと値オブジェクト（`Record`, `User`, `Status`, `MediaType`, `SortKey`）。他層に依存しない |
-| `internal/usecase/` | ユースケース層。`auth` / `record` / `search` / `nlsearch`（自然文検索）/ `home` / `translate` / `airing` / `taxonomy`（AI 機能が使うジャンル・タグ一覧）と、横断で使う `cache` |
+| `internal/usecase/` | ユースケース層。`auth` / `record` / `search` / `nlsearch`（自然文検索）/ `home` / `translate` / `airing` / `housekeeping`（期限切れセッションの削除）/ `taxonomy`（AI 機能が使うジャンル・タグ一覧）と、横断で使う `cache` |
 | `internal/handler/` | HTTP ハンドラ、ルーティング、静的ファイル配信、ヘルスチェック |
 | `internal/middleware/` | セッション Cookie による認証ミドルウェア |
 | `internal/scheduler/` | プロセス内の定期ジョブランナー |
@@ -256,12 +257,13 @@ Get(key)
 ## 定期ジョブ
 
 `internal/scheduler` は `Job{Name, Interval, Run}` を登録するだけのミニマルなランナーで、
-起動直後に 1 回、その後は `Interval` ごとに実行する。現在 2 つのジョブが乗っている。
+起動直後に 1 回、その後は `Interval` ごとに実行する。現在 3 つのジョブが乗っている。
 
 | ジョブ | 間隔 | すること |
 | --- | --- | --- |
 | `home-cache-warm` | 8 分 | ホーム向けキャッシュ 3 つを `Refresh` で取り直す |
 | `next-airing-sync` | 30 分 | `next_airing_at` が過去になったアニメを AniList から引き直して書き戻す |
+| `housekeeping` | 1 時間 | 期限切れのセッションを消す。外部 API は叩かない。BACKLOG 8-a のゲストアカウント削除も相乗りさせる予定 |
 
 ### ランナーの挙動
 
@@ -327,9 +329,10 @@ NULL のまま固定される。拾うには巡回カーソル用のカラム追
 `WHERE ... AND user_id = $N` を含み、他人のレコードは `ErrNotFound` になる。
 存在しないのか他人のものなのかを区別しない。
 
-例外は `airing.Repository` だけで、こちらは定期ジョブが保守のために全ユーザーのレコードを
-横断する。**インターフェースを分ける**ことで、ユーザースコープされない操作がそれと分かるように
-してある（`RecordRepository` が両方を実装）。
+例外は `airing.Repository` と `housekeeping.Repository` で、どちらも定期ジョブが保守のために
+全ユーザーを横断する。**インターフェースを分ける**ことで、ユーザースコープされない操作がそれと
+分かるようにしてある（`airing.Repository` は `RecordRepository` が両方を実装、
+`housekeeping.Repository` は専用の `HousekeepingRepository`）。
 
 ### その他の安全側の扱い
 
