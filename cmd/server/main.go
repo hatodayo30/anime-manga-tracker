@@ -21,6 +21,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/airing"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/recommend"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/search"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/taxonomy"
@@ -100,6 +101,15 @@ func run() error {
 		postgres.NewTranslationRepository(pool), aiTranslator, translate.NewClient())
 	translateHandler := handler.NewTranslateHandler(translateUsecase)
 
+	// AI のおすすめ（9-c）。aiTranslator と同じく、キーが無いときは nil のインターフェースを渡し、
+	// ジャンルベースのおすすめだけで動かす
+	var aiRecommender recommend.AIGateway
+	if claudeClient != nil {
+		aiRecommender = claudeClient
+	}
+	recommendUsecase := recommend.NewUsecase(recordRepo, taxonomyUsecase, anilistClient, aiRecommender, time.Now)
+	recommendHandler := handler.NewRecommendHandler(recommendUsecase)
+
 	healthHandler := handler.NewHealthHandler(pool)
 
 	e := handler.NewRouter(handler.Handlers{
@@ -109,6 +119,7 @@ func run() error {
 		Home:         homeHandler,
 		Translate:    translateHandler,
 		Health:       healthHandler,
+		Recommend:    recommendHandler,
 		RequireUser:  authMiddleware.RequireUser,
 		OptionalUser: authMiddleware.OptionalUser,
 		WebDir:       "frontend/dist",

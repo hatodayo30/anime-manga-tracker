@@ -126,6 +126,8 @@ export function HomePage() {
 
       {kind === 'manga' && <MagazineShelf ranking={ranking} onOpen={(item) => openWorkModal({ item, mediaType: 'manga', record: libraryByAniListId.get(item.anilistId) || null, onChange: reload })} />}
 
+      {user && <AIRecommendShelf kind={kind} library={library} onOpen={(item) => openWorkModal({ item, mediaType: kind, record: null, onChange: reload })} />}
+
       <RecommendPreviewShelf kind={kind} user={!!user} library={library} onOpen={(item) => openWorkModal({ item, mediaType: kind, record: null, onChange: reload })} />
     </>
   )
@@ -490,6 +492,64 @@ function RecommendPreviewShelf({
           {preview.map((item) => {
             const score = formatScore(item.score)
             return <PosterCard key={item.anilistId} item={item} caption={score ? `★${score}` : null} onClick={() => onOpen(item)} />
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type AIRecommendations = Awaited<ReturnType<typeof api.aiRecommendations>>
+
+// AIRecommendShelf は理由付きの「AI のおすすめ」（BACKLOG 9-c）。「あなたへのおすすめ」は置き換えずに残す。
+// サーバーが 1 人 1 日 1 回だけ作り、それ以外はキャッシュから返す。
+// 依存に library を入れないのは、作品モーダルで記録を変えるたびに取り直さないため。代わりに
+// 表示のときに記録済みの作品を外す（サーバーも返すときに外すが、取得後に記録したぶんはここで外す）。
+function AIRecommendShelf({ kind, library, onOpen }: { kind: MediaKind; library: LibraryRecord[]; onOpen: (item: AniListItem) => void }) {
+  const [result, setResult] = useState<AIRecommendations | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setResult(null)
+    setFailed(false)
+    api
+      .aiRecommendations({ type: kind })
+      .then((r) => !cancelled && setResult(r))
+      .catch(() => !cancelled && setFailed(true))
+    return () => {
+      cancelled = true
+    }
+  }, [kind])
+
+  const registeredIds = new Set(library.map((r) => r.anilistId))
+  const items = result ? result.items.filter((item) => !registeredIds.has(item.anilistId)) : []
+
+  return (
+    <div className="shelf">
+      <div className="shelf-head">
+        <h5 className="shelf-h">AI のおすすめ</h5>
+      </div>
+      {result?.source === 'genre' && items.length > 0 && (
+        <p className="text-muted shelf-desc">今はよく見ているジャンルから選んでいます。記録や評価が増えると、AI が理由付きで選びます。</p>
+      )}
+      {failed ? (
+        <p className="text-muted" style={{ fontSize: 13 }}>
+          おすすめの取得に失敗しました。
+        </p>
+      ) : result == null ? (
+        <p className="text-muted" style={{ fontSize: 13 }}>
+          読み込み中…（初回は AI が選ぶので数十秒かかることがあります）
+        </p>
+      ) : items.length === 0 ? (
+        <p className="text-muted" style={{ fontSize: 13 }}>
+          記録が増えると、あなたの好みに合わせたおすすめが表示されます。
+        </p>
+      ) : (
+        <div className="poster-row">
+          {items.map((item) => {
+            const score = formatScore(item.score)
+            return <PosterCard key={item.anilistId} item={item} caption={item.reason || (score ? `★${score}` : null)} onClick={() => onOpen(item)} />
           })}
         </div>
       )}

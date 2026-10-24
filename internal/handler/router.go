@@ -15,6 +15,7 @@ type Handlers struct {
 	Home         *HomeHandler
 	Translate    *TranslateHandler
 	Health       *HealthHandler
+	Recommend    *RecommendHandler
 	RequireUser  echo.MiddlewareFunc
 	OptionalUser echo.MiddlewareFunc
 	WebDir       string
@@ -139,6 +140,10 @@ func NewRouter(h Handlers) *echo.Echo {
 	e.GET("/api/home/trending-manga", h.Home.TrendingManga, publicAPILimit)
 	// translate は未ログインでも使えるが、ログイン済みなら AI 翻訳を使うので利用者を解決しておく
 	e.POST("/api/translate", h.Translate.Translate, publicAPILimit, h.OptionalUser)
+	// AI のおすすめは Claude を呼ぶのでログイン必須（BACKLOG 9「決めたこと」）。/api/records と同じく
+	// 利用者が特定できるので IP 単位の制限は掛けない。AI を呼ぶのは 1 人 1 日 1 回（種別ごと）で、
+	// それ以外はキャッシュから返す（usecase/recommend）
+	e.GET("/api/recommendations/ai", h.Recommend.AI, h.RequireUser)
 
 	// login は全体の制限に加えて専用の厳しい制限を重ねる（全体の 1 本としても数える）。
 	// signup も bcrypt を回すが、BACKLOG 4-b で閉じる前提なので全体の制限だけにしている。
