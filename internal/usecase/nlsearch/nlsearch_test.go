@@ -90,7 +90,7 @@ func newUsecase(cond nlsearch.Conditions) (*nlsearch.Usecase, fakes) {
 
 // AI が作った条件で AniList の条件検索を呼び、その結果と条件を返すことを保証する。
 func TestUsecase_Search_UsesAIConditions(t *testing.T) {
-	u, f := newUsecase(nlsearch.Conditions{Genres: []string{"Fantasy"}, Tags: []string{"Isekai", "Cooking"}})
+	u, f := newUsecase(nlsearch.Conditions{Genres: []string{"Fantasy"}, Tags: []string{"Isekai"}})
 
 	got, err := u.Search(context.Background(), domain.MediaTypeManga, "  異世界で料理する漫画 ")
 	if err != nil {
@@ -108,7 +108,7 @@ func TestUsecase_Search_UsesAIConditions(t *testing.T) {
 	if len(f.ai.gotTaxonomy.Tags) != len(testTaxonomy.Tags) {
 		t.Errorf("expected taxonomy to be passed to AI")
 	}
-	want := anilist.Filter{MediaType: domain.MediaTypeManga, Genres: []string{"Fantasy"}, Tags: []string{"Isekai", "Cooking"}, ExcludedGenres: []string{}, ExcludedTags: []string{}}
+	want := anilist.Filter{MediaType: domain.MediaTypeManga, Genres: []string{"Fantasy"}, Tags: []string{"Isekai"}, ExcludedGenres: []string{}, ExcludedTags: []string{}}
 	if !filterEqual(f.anilist.gotFilter, want) {
 		t.Errorf("got filter %+v, want %+v", f.anilist.gotFilter, want)
 	}
@@ -131,14 +131,13 @@ func TestUsecase_Search_MediaTypeFromAIOverridesSelected(t *testing.T) {
 	}
 }
 
-// 一覧に無い値・重複・絞り込みと除外の衝突を落とし、件数を上限で切ることを保証する。
-// genre_in / tag_in が AND の場合に条件を盛りすぎて 0 件になるのを避ける（BACKLOG 9-b）。
+// 一覧に無い値・重複・絞り込みと除外の衝突を落とすことを保証する。
 func TestUsecase_Search_SanitizesConditions(t *testing.T) {
 	u, f := newUsecase(nlsearch.Conditions{
-		Genres:         []string{"Fantasy", "Fantasy", "NotAGenre", "Comedy", "Action"},
-		Tags:           []string{"Isekai", "Cooking", "Food", "Magic"},
+		Genres:         []string{"NotAGenre", "Fantasy", "Fantasy"},
+		Tags:           []string{"Unknown"},
 		ExcludedGenres: []string{"Fantasy", "Horror"},
-		ExcludedTags:   []string{"Gore", "Isekai", "Unknown"},
+		ExcludedTags:   []string{"Gore", "Gore", "Unknown"},
 		Query:          "  ",
 	})
 
@@ -147,13 +146,57 @@ func TestUsecase_Search_SanitizesConditions(t *testing.T) {
 	}
 	want := anilist.Filter{
 		MediaType:      domain.MediaTypeAnime,
-		Genres:         []string{"Fantasy", "Comedy"},
-		Tags:           []string{"Isekai", "Cooking", "Food"},
+		Genres:         []string{"Fantasy"},
+		Tags:           []string{},
 		ExcludedGenres: []string{"Horror"},
 		ExcludedTags:   []string{"Gore"},
 	}
 	if !filterEqual(f.anilist.gotFilter, want) {
 		t.Errorf("got filter %+v, want %+v", f.anilist.gotFilter, want)
+	}
+}
+
+// 絞り込みはジャンルとタグを合わせて 2 つまでにし、枠はタグから先に使うことを保証する。
+// 2026-10-24 の実機確認で、「異世界で料理する漫画」に AI がジャンル 2・タグ 3 を選んで
+// 1 件しか出なかった（genre_in / tag_in は AND で効いているとみられる。BACKLOG 9-b）。
+func TestUsecase_Search_LimitsIncludesToTwoPreferringTags(t *testing.T) {
+	cases := map[string]struct {
+		in         nlsearch.Conditions
+		wantGenres []string
+		wantTags   []string
+	}{
+		"実機で出た条件": {
+			in:         nlsearch.Conditions{Genres: []string{"Fantasy", "Comedy"}, Tags: []string{"Isekai", "Food", "Magic"}},
+			wantGenres: []string{},
+			wantTags:   []string{"Isekai", "Food"},
+		},
+		"タグ 1 つならジャンルで埋める": {
+			in:         nlsearch.Conditions{Genres: []string{"Slice of Life", "Comedy"}, Tags: []string{"Food"}},
+			wantGenres: []string{"Slice of Life"},
+			wantTags:   []string{"Food"},
+		},
+		"ジャンルだけ": {
+			in:         nlsearch.Conditions{Genres: []string{"Horror", "Action", "Comedy"}},
+			wantGenres: []string{"Horror", "Action"},
+			wantTags:   []string{},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			u, f := newUsecase(tc.in)
+
+			got, err := u.Search(context.Background(), domain.MediaTypeManga, "x")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !slices.Equal(f.anilist.gotFilter.Genres, tc.wantGenres) || !slices.Equal(f.anilist.gotFilter.Tags, tc.wantTags) {
+				t.Errorf("got genres=%v tags=%v, want genres=%v tags=%v", f.anilist.gotFilter.Genres, f.anilist.gotFilter.Tags, tc.wantGenres, tc.wantTags)
+			}
+			// 画面のチップも実際に検索した条件と同じものを出す
+			if !slices.Equal(got.Conditions.Tags, tc.wantTags) || !slices.Equal(got.Conditions.Genres, tc.wantGenres) {
+				t.Errorf("returned conditions differ from searched filter: %+v", got.Conditions)
+			}
+		})
 	}
 }
 

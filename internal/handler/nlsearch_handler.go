@@ -25,7 +25,7 @@ func NewNLSearchHandler(u *nlsearch.Usecase) *NLSearchHandler {
 }
 
 // Search handles GET /api/search/natural?type=manga&q=異世界で料理する漫画
-// 検索画面の「AI で探す」から呼ぶ。ルーターで RequireUser を被せており、未ログインは 401（BACKLOG 9-b）。
+// 検索画面の「内容で探す」から呼ぶ。ルーターで RequireUser を被せており、未ログインは 401（BACKLOG 9-b）。
 // AI が使えないときも 200 で従来の検索結果を返し、fallback に理由を入れる。
 func (h *NLSearchHandler) Search(c echo.Context) error {
 	mediaType := domain.MediaType(c.QueryParam("type"))

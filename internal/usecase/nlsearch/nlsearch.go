@@ -63,13 +63,15 @@ type KeywordSearcher interface {
 	Search(ctx context.Context, mediaType domain.MediaType, query string) ([]anilist.SearchResult, error)
 }
 
-// 条件の数の上限。AniList の genre_in / tag_in に複数渡したとき「すべてを含む」か「どれかを含む」かを
-// 確かめていない（BACKLOG 9-b「残っている穴」）。AND だった場合に条件を盛りすぎて 0 件になるのを
-// 避けるため、絞り込みに使う条件は少なく切る。構造化出力は maxItems を使えないので、ここで切る。
-// 除外は 0 件の原因になりにくいので少し多めに残す。
+// 条件の数の上限。構造化出力は maxItems を使えないので、ここで切る。
+//
+// 絞り込み（ジャンル + タグ）は合わせて 2 つまで。2026-10-24 の実機確認で「異世界で料理する漫画」に
+// AI がジャンル 2・タグ 3 を選び、1 件しか出なかった。genre_in / tag_in は「すべてを含む」（AND）で
+// 効いているとみられ、さらにタグごとに minimumTagRank の下限が掛かるので、条件を足すほど急に減る。
+// プロンプトで「少なく選ぶ」と伝えても AI は文に無い条件（"Comedy" など）を盛ったので、数で切る。
+// 除外は 0 件の原因になりにくいので多めに残す。
 const (
-	maxGenres         = 2
-	maxTags           = 3
+	maxIncludes       = 2
 	maxExcludedGenres = 3
 	maxExcludedTags   = 3
 )
@@ -217,8 +219,10 @@ func sanitize(c Conditions, tax anilist.Taxonomy) Conditions {
 	if c.MediaType.Valid() {
 		out.MediaType = c.MediaType
 	}
-	out.Genres = pick(c.Genres, genres, nil, maxGenres)
-	out.Tags = pick(c.Tags, tags, nil, maxTags)
+	// 枠はタグに先に渡す。ジャンル（20 種ほど）は大まかで、「異世界」「料理」のような文の要素は
+	// タグのほうが直接表せる。AI には重要な順に並べさせているので、先頭から取る
+	out.Tags = pick(c.Tags, tags, nil, maxIncludes)
+	out.Genres = pick(c.Genres, genres, nil, maxIncludes-len(out.Tags))
 	out.ExcludedGenres = pick(c.ExcludedGenres, genres, out.Genres, maxExcludedGenres)
 	out.ExcludedTags = pick(c.ExcludedTags, tags, out.Tags, maxExcludedTags)
 	return out
