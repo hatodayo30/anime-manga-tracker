@@ -7,6 +7,9 @@ import type { LibraryRecord, RelatedWork } from '../types'
 import { Thumb } from './Thumb'
 import type { OpenWorkModalOptions, WorkModalItem } from './WorkModalContext'
 
+// 翻訳を待ってスケルトンを出す上限。Claude で初めて訳す作品は 2 秒前後かかるので、その数倍にした
+const TRANSLATE_WAIT_MS = 6000
+
 interface FreshInfo {
   total: number | null // アニメ=話数 / 漫画=巻数
   airingStatus?: string
@@ -33,6 +36,9 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const [confirmingRemove, setConfirmingRemove] = useState(false)
   const [ratingMemoOpen, setRatingMemoOpen] = useState(() => !!(record?.rating || record?.memo))
   const [translatedSynopsis, setTranslatedSynopsis] = useState<string | null>(null)
+  // 翻訳を待つ間は原文（英語）を出さずにスケルトンを出す。原文を先に出すと、読み始めたところで
+  // 行数ごと日本語に入れ替わる。待つのは各作品を最初に開いた人だけで、2 回目以降は保存済みの訳がすぐ返る。
+  const [awaitingTranslation, setAwaitingTranslation] = useState(() => !!item.synopsis)
   const [freshInfo, setFreshInfo] = useState<FreshInfo | null>(null)
   const [relatedWorks, setRelatedWorks] = useState<RelatedWork[] | null>(null)
 
@@ -93,18 +99,26 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   }, [freshInfo, currentRecord])
 
   useEffect(() => {
+    if (!item.synopsis) return
     let cancelled = false
-    if (item.synopsis) {
-      api
-        .translate({ text: item.synopsis, target: 'ja' })
-        .then((translated) => {
-          if (cancelled || !translated) return
-          setTranslatedSynopsis(translated)
-        })
-        .catch(() => {})
-    }
+    // サーバー側は Claude が遅いと MyMemory に落とすまで数十秒かかりうる。その間スケルトンのまま
+    // 待たせるより、一定時間で原文を出し、訳が届いたら差し替える
+    const giveUp = window.setTimeout(() => setAwaitingTranslation(false), TRANSLATE_WAIT_MS)
+    api
+      // title は AI に作品名の表記を合わせさせるため（ローマ字の作品名を直訳・取り違えしないように）
+      .translate({ text: item.synopsis, title: item.title, target: 'ja' })
+      .then((translated) => {
+        if (cancelled || !translated) return
+        setTranslatedSynopsis(translated)
+      })
+      .catch(() => {})
+      .finally(() => {
+        window.clearTimeout(giveUp)
+        if (!cancelled) setAwaitingTranslation(false)
+      })
     return () => {
       cancelled = true
+      window.clearTimeout(giveUp)
     }
   }, [])
 
@@ -269,19 +283,27 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
                 </span>
               ))}
             </div>
-            <p
-              style={{
-                fontSize: 13,
-                lineHeight: 1.75,
-                margin: 0,
-                display: '-webkit-box',
-                WebkitLineClamp: 4,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}
-            >
-              {translatedSynopsis || item.synopsis || 'あらすじは未登録です。'}
-            </p>
+            {awaitingTranslation && !translatedSynopsis ? (
+              <div role="status" aria-label="あらすじを翻訳しています" className="synopsis-skeleton">
+                <span />
+                <span />
+                <span />
+              </div>
+            ) : (
+              <p
+                style={{
+                  fontSize: 13,
+                  lineHeight: 1.75,
+                  margin: 0,
+                  display: '-webkit-box',
+                  WebkitLineClamp: 4,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                }}
+              >
+                {translatedSynopsis || item.synopsis || 'あらすじは未登録です。'}
+              </p>
+            )}
           </div>
         </div>
 

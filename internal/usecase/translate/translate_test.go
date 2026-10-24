@@ -62,8 +62,25 @@ func (f *fakeRepo) Save(ctx context.Context, sourceSHA256 []byte, targetLang, tr
 	return nil
 }
 
-func keyOf(text, lang string) savedKey {
-	sum := sha256.Sum256([]byte(text))
+// fakeAI は AI 翻訳のフェイク。title が渡ってくることを検証するためフォールバックと分けている。
+type fakeAI struct {
+	result string
+	err    error
+
+	calls    int
+	gotTitle string
+}
+
+func (f *fakeAI) Translate(ctx context.Context, text, title, targetLang string) (string, error) {
+	f.calls++
+	f.gotTitle = title
+	return f.result, f.err
+}
+
+// keyOf は usecase と同じ規則で保存キーを作る（title のハッシュ + 原文の SHA-256）。
+func keyOf(text, title, lang string) savedKey {
+	titleSum := sha256.Sum256([]byte(title))
+	sum := sha256.Sum256(append(titleSum[:], text...))
 	return savedKey{string(sum[:]), lang}
 }
 
@@ -72,7 +89,7 @@ func TestUsecase_Translate_DefaultsTargetLangToJa(t *testing.T) {
 	fallback := &fakeGateway{result: "翻訳済み"}
 	u := translate.NewUsecase(newFakeRepo(), nil, fallback)
 
-	got, err := u.Translate(context.Background(), "hello", "", false)
+	got, err := u.Translate(context.Background(), "hello", "", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +106,7 @@ func TestUsecase_Translate_PassesThroughExplicitTarget(t *testing.T) {
 	fallback := &fakeGateway{}
 	u := translate.NewUsecase(newFakeRepo(), nil, fallback)
 
-	if _, err := u.Translate(context.Background(), "hello", "fr", false); err != nil {
+	if _, err := u.Translate(context.Background(), "hello", "", "fr", false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if fallback.gotTarget != "fr" {
@@ -99,10 +116,10 @@ func TestUsecase_Translate_PassesThroughExplicitTarget(t *testing.T) {
 
 // 空白だけの原文では上流を 1 本も呼ばないことを保証する（AI に空の翻訳を課金させない）。
 func TestUsecase_Translate_BlankTextCallsNothing(t *testing.T) {
-	ai, fallback := &fakeGateway{}, &fakeGateway{}
+	ai, fallback := &fakeAI{}, &fakeGateway{}
 	u := translate.NewUsecase(newFakeRepo(), ai, fallback)
 
-	got, err := u.Translate(context.Background(), "  \n ", "ja", true)
+	got, err := u.Translate(context.Background(), "  \n ", "", "ja", true)
 	if err != nil || got != "" {
 		t.Fatalf("got (%q, %v), want empty", got, err)
 	}
@@ -114,11 +131,11 @@ func TestUsecase_Translate_BlankTextCallsNothing(t *testing.T) {
 // 保存済みの AI 翻訳は、未ログインでも上流を呼ばずにそのまま返すことを保証する。
 func TestUsecase_Translate_ReturnsSavedTranslationEvenWithoutLogin(t *testing.T) {
 	repo := newFakeRepo()
-	repo.saved[keyOf("hello", "ja")] = "保存済み"
-	ai, fallback := &fakeGateway{}, &fakeGateway{}
+	repo.saved[keyOf("hello", "", "ja")] = "保存済み"
+	ai, fallback := &fakeAI{}, &fakeGateway{}
 	u := translate.NewUsecase(repo, ai, fallback)
 
-	got, err := u.Translate(context.Background(), "hello", "ja", false)
+	got, err := u.Translate(context.Background(), "hello", "", "ja", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -134,10 +151,10 @@ func TestUsecase_Translate_ReturnsSavedTranslationEvenWithoutLogin(t *testing.T)
 // （連打で請求が積み上がらないこと、低品質な訳で AI 翻訳の機会を潰さないこと）。
 func TestUsecase_Translate_WithoutLoginUsesFallbackOnly(t *testing.T) {
 	repo := newFakeRepo()
-	ai, fallback := &fakeGateway{result: "AI訳"}, &fakeGateway{result: "機械訳"}
+	ai, fallback := &fakeAI{result: "AI訳"}, &fakeGateway{result: "機械訳"}
 	u := translate.NewUsecase(repo, ai, fallback)
 
-	got, err := u.Translate(context.Background(), "hello", "ja", false)
+	got, err := u.Translate(context.Background(), "hello", "", "ja", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -155,10 +172,10 @@ func TestUsecase_Translate_WithoutLoginUsesFallbackOnly(t *testing.T) {
 // ログイン済みで未保存なら AI で訳し、原文の SHA-256 と翻訳先言語をキーに保存することを保証する。
 func TestUsecase_Translate_WithLoginUsesAIAndSaves(t *testing.T) {
 	repo := newFakeRepo()
-	ai, fallback := &fakeGateway{result: "AI訳"}, &fakeGateway{}
+	ai, fallback := &fakeAI{result: "AI訳"}, &fakeGateway{}
 	u := translate.NewUsecase(repo, ai, fallback)
 
-	got, err := u.Translate(context.Background(), "hello", "ja", true)
+	got, err := u.Translate(context.Background(), "hello", "", "ja", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -168,12 +185,12 @@ func TestUsecase_Translate_WithLoginUsesAIAndSaves(t *testing.T) {
 	if fallback.calls != 0 {
 		t.Errorf("expected fallback not to be called, got %d calls", fallback.calls)
 	}
-	if saved := repo.saved[keyOf("hello", "ja")]; saved != "AI訳" {
+	if saved := repo.saved[keyOf("hello", "", "ja")]; saved != "AI訳" {
 		t.Errorf("expected AI result saved under sha256(text)+lang, got %q", saved)
 	}
 
 	// 2 回目は保存済みを返し、AI を呼び直さない
-	if _, err := u.Translate(context.Background(), "hello", "ja", true); err != nil {
+	if _, err := u.Translate(context.Background(), "hello", "", "ja", true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ai.calls != 1 {
@@ -184,11 +201,11 @@ func TestUsecase_Translate_WithLoginUsesAIAndSaves(t *testing.T) {
 // AI が失敗したら MyMemory に落とし、何も保存しないことを保証する（失敗の扱いの方針）。
 func TestUsecase_Translate_AIFailureFallsBack(t *testing.T) {
 	repo := newFakeRepo()
-	ai := &fakeGateway{err: errors.New("budget exceeded")}
+	ai := &fakeAI{err: errors.New("budget exceeded")}
 	fallback := &fakeGateway{result: "機械訳"}
 	u := translate.NewUsecase(repo, ai, fallback)
 
-	got, err := u.Translate(context.Background(), "hello", "ja", true)
+	got, err := u.Translate(context.Background(), "hello", "", "ja", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -205,7 +222,7 @@ func TestUsecase_Translate_NilAIUsesFallback(t *testing.T) {
 	fallback := &fakeGateway{result: "機械訳"}
 	u := translate.NewUsecase(newFakeRepo(), nil, fallback)
 
-	got, err := u.Translate(context.Background(), "hello", "ja", true)
+	got, err := u.Translate(context.Background(), "hello", "", "ja", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -218,10 +235,10 @@ func TestUsecase_Translate_NilAIUsesFallback(t *testing.T) {
 func TestUsecase_Translate_FindErrorDoesNotStopTranslation(t *testing.T) {
 	repo := newFakeRepo()
 	repo.findErr = errors.New("db down")
-	ai := &fakeGateway{result: "AI訳"}
+	ai := &fakeAI{result: "AI訳"}
 	u := translate.NewUsecase(repo, ai, &fakeGateway{})
 
-	got, err := u.Translate(context.Background(), "hello", "ja", true)
+	got, err := u.Translate(context.Background(), "hello", "", "ja", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -234,14 +251,54 @@ func TestUsecase_Translate_FindErrorDoesNotStopTranslation(t *testing.T) {
 func TestUsecase_Translate_SaveErrorStillReturnsTranslation(t *testing.T) {
 	repo := newFakeRepo()
 	repo.saveErr = errors.New("db down")
-	ai := &fakeGateway{result: "AI訳"}
+	ai := &fakeAI{result: "AI訳"}
 	u := translate.NewUsecase(repo, ai, &fakeGateway{})
 
-	got, err := u.Translate(context.Background(), "hello", "ja", true)
+	got, err := u.Translate(context.Background(), "hello", "", "ja", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != "AI訳" {
 		t.Errorf("got %q, want %q", got, "AI訳")
+	}
+}
+
+// 作品名が AI にだけ渡り、MyMemory には渡らないことを保証する（AI が作品名を取り違えないため）。
+func TestUsecase_Translate_PassesTitleToAI(t *testing.T) {
+	ai, fallback := &fakeAI{result: "AI訳"}, &fakeGateway{}
+	u := translate.NewUsecase(newFakeRepo(), ai, fallback)
+
+	if _, err := u.Translate(context.Background(), "The second season of Ao no Hako.", "アオのハコ Season 2", "ja", true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ai.gotTitle != "アオのハコ Season 2" {
+		t.Errorf("expected title passed to AI, got %q", ai.gotTitle)
+	}
+}
+
+// 同じ原文でも作品名が違えば別の訳として保存されることを保証する。title もクライアントが
+// 送る値なので、偽の作品名を付けた誤訳が、正しい作品名で開いた人に配られてはいけない。
+func TestUsecase_Translate_TitleIsPartOfSavedKey(t *testing.T) {
+	repo := newFakeRepo()
+	ai := &fakeAI{result: "偽の作品名での訳"}
+	u := translate.NewUsecase(repo, ai, &fakeGateway{})
+
+	if _, err := u.Translate(context.Background(), "synopsis", "偽の作品名", "ja", true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ai.result = "正しい作品名での訳"
+	got, err := u.Translate(context.Background(), "synopsis", "正しい作品名", "ja", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "正しい作品名での訳" {
+		t.Errorf("got %q, want translation for the correct title", got)
+	}
+	if ai.calls != 2 {
+		t.Errorf("expected AI to be called for each title, got %d calls", ai.calls)
+	}
+	if saved := repo.saved[keyOf("synopsis", "正しい作品名", "ja")]; saved != "正しい作品名での訳" {
+		t.Errorf("expected translation saved under its own title key, got %q", saved)
 	}
 }

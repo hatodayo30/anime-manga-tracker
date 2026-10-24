@@ -144,7 +144,9 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 
 1. `/api/anilist/media` — 総話数・放送状況の最新化
 2. `/api/anilist/relations` — 関連作品（続編・前日譚・スピンオフ）
-3. `/api/translate` — あらすじを日本語へ翻訳（保存済みの AI 翻訳 → ログイン済みなら Claude → MyMemory の順）
+3. `/api/translate` — あらすじを日本語へ翻訳（保存済みの AI 翻訳 → ログイン済みなら Claude → MyMemory の順）。
+   作品名（`title`）も送り、Claude に作品名の表記を合わせさせる。訳が届くまで本文はスケルトンにし、
+   6 秒待っても届かなければ原文を出して、届いた時点で差し替える
 
 取得した `total` が保存済みの値とズレていれば、その場で PATCH して DB を同期する。
 ライブラリ画面の進捗バーと「全巻読了で done へ」の判定は DB の値だけを見るためで、
@@ -397,6 +399,7 @@ Vite のプロキシ先ポートは `BACKEND_PORT` → `PORT` → `8080` の順�
 | `/api/anilist/media` の `ids` | 100 件 |
 | `/api/search` の `q` | 100 文字 |
 | `/api/translate` の `text` | 4500 バイト |
+| `/api/translate` の `title` | 300 バイト |
 | `/api/recommendations` の `genres` | 20 件 / 400 文字 |
 | ボディ全体 | 64K（`middleware.BodyLimit`） |
 | 未認証 `/api/*` | 2 req/秒・バースト 30（IP 単位） |
@@ -427,8 +430,9 @@ stale-while-revalidate とウォームアップの価値はむしろ上がった
 - **水平スケールできない**。キャッシュ・single-flight・トークンバケット・スケジューラが
   全部プロセス内。ElastiCache 等に出すまで解禁しない
 - **表示言語をサーバーが決め打ちしている**。日本作品は native 優先、韓国・中国作品は
-  english 優先のフォールバックが固定
-- **AI 翻訳だけが永続化される**。Claude の訳は `translations`（原文の SHA-256 + 翻訳先言語）に
+  別名（synonyms）のうちかなを含むもの → english の順が固定。別名に日本語タイトルが無い作品
+  （"Tower of God" など）は英語のまま
+- **AI 翻訳だけが永続化される**。Claude の訳は `translations`（原文と作品名から作ったハッシュ + 翻訳先言語）に
   保存して誰にでも返すが、MyMemory の訳は保存しない。未ログインで未保存の作品を開くと、
   毎回 MyMemory を叩く
 - **セッションの期限切れ行が残る**。`sessions` を掃除するジョブはない

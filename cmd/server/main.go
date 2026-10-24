@@ -74,7 +74,7 @@ func run() error {
 
 	// API キーが無い環境では AI 翻訳を組み込まない。nil の Gateway を usecase に渡すと MyMemory だけで動く。
 	// （*claude.Client の nil をそのまま渡すと、インターフェースとしては nil にならないので分岐で渡し分ける）
-	var aiTranslator translateusecase.Gateway
+	var aiTranslator translateusecase.AIGateway
 	if cfg.AnthropicAPIKey != "" {
 		aiTranslator = claude.NewClient(cfg.AnthropicAPIKey, claude.NewBudget(cfg.ClaudeDailyTokenLimit, time.Now))
 		log.Printf("ai translate: enabled (daily limit %d tokens)", cfg.ClaudeDailyTokenLimit)
