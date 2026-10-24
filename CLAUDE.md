@@ -114,7 +114,8 @@ ECS は `desiredCount: 1` 固定。この前提を崩す変更は BACKLOG で設
   （`.claude/hooks/block-secret-reads.sh` と `permissions.deny`）。
   このリポジトリの作業に認証情報は要らない。リポジトリ内の `.env` は読める。
 - フックを変更したら回帰テストを通すこと。
-  `bash .claude/hooks/block-destructive.test.sh` / `bash .claude/hooks/block-secret-reads.test.sh`
+  `bash .claude/hooks/block-destructive.test.sh` / `bash .claude/hooks/block-secret-reads.test.sh` /
+  `bash .claude/hooks/block-main-branch.test.sh`
 - コミットメッセージは Conventional Commits 形式（`feat:` / `fix:` / `docs:` / `chore:`）＋日本語。
 - commit・push・PR 作成は `/pr` でまとめて実行できる。
 
