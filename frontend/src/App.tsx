@@ -8,6 +8,9 @@ import { RecommendPage } from './pages/RecommendPage'
 import { SearchPage } from './pages/SearchPage'
 import { SeasonPage } from './pages/SeasonPage'
 
+// ログイン画面とサインアップ画面以外はすべてログイン必須。アプリを開いたら必ずログイン画面に
+// 飛ばす（2026-10-25）。サーバーの /api/home/* などは未ログインでも叩けるままで、
+// ここで塞いでいるのは画面だけ（BACKLOG 4-a の 4）。
 function App() {
   return (
     <Routes>
@@ -17,7 +20,9 @@ function App() {
         path="/"
         element={
           <Layout>
-            <HomePage />
+            <ProtectedRoute>
+              <HomePage />
+            </ProtectedRoute>
           </Layout>
         }
       />
@@ -45,7 +50,9 @@ function App() {
         path="/recommend"
         element={
           <Layout>
-            <RecommendPage />
+            <ProtectedRoute>
+              <RecommendPage />
+            </ProtectedRoute>
           </Layout>
         }
       />
@@ -53,7 +60,9 @@ function App() {
         path="/season"
         element={
           <Layout>
-            <SeasonPage />
+            <ProtectedRoute>
+              <SeasonPage />
+            </ProtectedRoute>
           </Layout>
         }
       />
