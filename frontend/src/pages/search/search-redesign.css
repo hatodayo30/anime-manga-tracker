@@ -1,0 +1,168 @@
+/*
+ * 検索・追加画面（案8）で足すスタイル。
+ * styles.css の :root のトークン（色・余白・角丸・フォント）と、既存のクラス
+ * （.btn / .seg / .seg-opt / .input / .poster-grid / .poster-thumb / .text-muted）をそのまま使う前提。
+ * 新しいクラスは既存と名前がぶつからないよう srch- で始める。
+ * 結果のポスターは既存の PosterCard を使うので、ポスター自体のスタイルはここに無い。
+ */
+
+:root {
+  --color-warn: #e3b27e; /* 新しい色はこれ 1 つだけ（AI が失敗したときのお知らせ） */
+  --srch-ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.srch-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* 見出し行（タイトル＋アニメ / 漫画） */
+.srch-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-4); margin-bottom: var(--space-6); flex-wrap: wrap;
+}
+.srch-screen { max-width: 1080px; margin: 0 auto; }
+
+/* 塗りのボタン（検索・探す・ログイン） */
+.srch-btn-accent { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-bg); font-weight: 700; }
+.srch-btn-accent:hover { background: color-mix(in srgb, var(--color-accent) 85%, white); }
+
+/* ===== 探し方の切り替え: 枠の分かれた 2 つのボタン ===== */
+.srch-modes {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+  max-width: 560px; margin: 0 auto var(--space-4);
+}
+.srch-mode {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 54px; padding: 4px 10px; font: inherit; color: var(--color-text); cursor: pointer;
+  background: var(--color-surface); border: 1px solid var(--color-divider); border-radius: var(--radius-pill);
+  transition: background 200ms ease, border-color 200ms ease, color 200ms ease;
+}
+.srch-mode:not(.is-on):hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.srch-mode.is-on { color: var(--color-bg); background: var(--color-accent); border-color: var(--color-accent); }
+.srch-mode-title { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-heading); font-weight: 700; font-size: 14px; }
+.srch-mode-sub { font-size: 11px; opacity: 0.78; }
+
+/* ===== 作品名の欄＋右の検索ボタン ===== */
+.srch-title-row { display: flex; gap: var(--space-3); max-width: 560px; margin: 0 auto var(--space-4); }
+.srch-title-field { position: relative; flex: 1; min-width: 0; }
+.srch-title-field > svg {
+  position: absolute; left: 15px; top: 50%; transform: translateY(-50%); pointer-events: none;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.srch-title-field .input { padding-left: 40px; min-height: 46px; font-size: 15px; }
+.srch-title-go { flex: none; min-height: 46px; padding: 0 22px; }
+
+/* 欄の下: 最近の検索（作品名）／入力例（内容） */
+.srch-chips {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px;
+  max-width: 760px; margin: 0 auto var(--space-6);
+}
+.srch-chips-label { font-size: 12px; }
+.srch-recent { display: inline-flex; align-items: center; min-height: 34px; border: 1px solid var(--color-divider); border-radius: var(--radius-pill); }
+.srch-recent:hover { border-color: var(--color-accent); }
+.srch-recent-go {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 4px 0 12px;
+  font: inherit; font-size: 12px; color: var(--color-text); background: none; border: 0; border-radius: var(--radius-pill); cursor: pointer;
+}
+.srch-recent-go > svg { color: color-mix(in srgb, var(--color-text) 50%, transparent); }
+.srch-recent-x {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; margin-right: 2px; padding: 0;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent); background: none; border: 0; border-radius: 50%; cursor: pointer;
+}
+.srch-recent-x:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 10%, transparent); }
+.srch-example {
+  display: inline-flex; align-items: center; min-height: 34px; padding: 0 14px;
+  font: inherit; font-size: 12px; color: var(--color-text); background: none; cursor: pointer;
+  border: 1px solid var(--color-divider); border-radius: var(--radius-pill);
+}
+.srch-example:hover { border-color: var(--color-accent); color: var(--color-accent-100); }
+
+/* ===== 内容の欄（大きな枠・確定してから探す） ===== */
+.srch-content-card {
+  max-width: 760px; padding: 4px; margin: 0 auto var(--space-3);
+  border-radius: var(--radius-lg); background: var(--color-surface);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.srch-content-card:focus-within { border-color: var(--color-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.srch-content-input {
+  display: block; width: 100%; min-height: 70px; padding: 12px 16px 4px; resize: none;
+  font: inherit; font-size: 16px; line-height: 1.6; color: var(--color-text); caret-color: var(--color-accent);
+  background: none; border: 0;
+}
+.srch-content-input:focus-visible { outline: none; }
+.srch-content-input::placeholder { color: color-mix(in srgb, var(--color-text) 45%, transparent); }
+.srch-content-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-4); padding: 4px 6px 6px 16px; font-size: 12px; }
+.srch-count { font-variant-numeric: tabular-nums; }
+.srch-content-foot .btn { min-height: 40px; padding: 0 22px; }
+
+/* ===== 結果の見出し ===== */
+.srch-res-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap;
+  padding-bottom: 12px; margin: var(--space-6) 0 var(--space-4); border-bottom: 1px solid var(--color-divider);
+}
+.srch-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; margin-bottom: 4px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.srch-sentence { font-size: 15px; line-height: 2; margin: 0; }
+.srch-tok { display: inline-flex; align-items: center; padding: 1px 11px; margin: 0 2px; border-radius: var(--radius-pill); font-size: 13px; line-height: 1.7; vertical-align: 1px; }
+.srch-tok-kind { background: var(--color-neutral-800); color: var(--color-neutral-100); }
+.srch-tok-genre { background: var(--color-accent-800); color: var(--color-accent-100); }
+.srch-tok-tag { border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent); color: var(--color-accent-100); padding: 0 10px; }
+.srch-kind-note { font-size: 12px; }
+.srch-cond-extra { font-size: 12px; margin: 2px 0 0; }
+.srch-count-wrap { display: flex; align-items: baseline; gap: 6px; flex: none; }
+.srch-count-big { font-family: var(--font-brand); font-weight: 700; font-size: 30px; line-height: 1; }
+
+.srch-empty { padding: var(--space-6) 0; text-align: center; font-size: 13px; }
+
+/* ===== 待つ間 ===== */
+.srch-wait {
+  display: flex; align-items: center; gap: 12px; max-width: 760px; padding: 12px 14px;
+  margin: var(--space-6) auto var(--space-4); border-radius: var(--radius-md); background: var(--color-surface); box-shadow: var(--shadow-sm);
+}
+.srch-wait-text { flex: 1; min-width: 0; font-size: 13px; }
+.srch-spinner { width: 18px; height: 18px; flex: none; border-radius: 50%; border: 2px solid var(--color-neutral-800); border-top-color: var(--color-accent); animation: srch-spin 0.9s linear infinite; }
+@keyframes srch-spin { to { transform: rotate(360deg); } }
+.srch-skel {
+  background: linear-gradient(90deg, var(--color-neutral-900) 0%, var(--color-neutral-800) 50%, var(--color-neutral-900) 100%);
+  background-size: 200% 100%; animation: synopsis-shimmer 1.4s ease-in-out infinite; /* synopsis-shimmer は styles.css にある */
+}
+.srch-skel-line { height: 12px; border-radius: 6px; margin-top: 8px; width: 80%; }
+
+/* ===== お知らせ（従来検索に落ちた理由・ログイン・通信エラー） ===== */
+.srch-notice {
+  display: flex; gap: 10px; align-items: flex-start; max-width: 760px; padding: 12px 14px; margin: var(--space-6) auto var(--space-4);
+  border-radius: var(--radius-md); background: var(--color-surface); border: 1px solid var(--color-divider); font-size: 13px; line-height: 1.6;
+}
+.srch-notice > svg { flex: none; margin-top: 2px; }
+.srch-notice-title { font-weight: 700; margin-bottom: 2px; }
+.srch-notice-body { color: color-mix(in srgb, var(--color-text) 72%, transparent); }
+.srch-notice-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.srch-notice-info { border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface)); }
+.srch-notice-info > svg { color: var(--color-accent); }
+.srch-notice-warn { border-color: color-mix(in srgb, var(--color-warn) 50%, transparent); background: color-mix(in srgb, var(--color-warn) 8%, var(--color-surface)); }
+.srch-notice-warn > svg { color: var(--color-warn); }
+.srch-notice-off > svg { color: color-mix(in srgb, var(--color-text) 60%, transparent); }
+.srch-notice-top { margin-top: 0; }
+
+/* ===== 動き ===== */
+/* 欄の入れ替わり */
+.srch-swap-in { animation: srch-swap-in 260ms var(--srch-ease-out) both; }
+@keyframes srch-swap-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* 結果のポスター: 少し下からフェードで入ってくる。--srch-i（0〜10）で 1 枚ずつ 60ms ずらす */
+.srch-reveal { animation: srch-rise-in 460ms var(--srch-ease-out) both; animation-delay: calc(var(--srch-i, 0) * 60ms); }
+@keyframes srch-rise-in { from { opacity: 0; transform: translateY(14px) scale(0.98); } to { opacity: 1; transform: none; } }
+/* 見出し・お知らせ・待ちの表示は短いフェードだけ */
+.srch-fade { animation: srch-fade-in 320ms ease both; animation-delay: calc(var(--srch-i, 0) * 50ms); }
+@keyframes srch-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .srch-reveal, .srch-fade, .srch-swap-in { animation: srch-fade-in 160ms ease both; animation-delay: 0ms; }
+  .srch-mode { transition: none; }
+  .srch-spinner, .srch-skel { animation: none; }
+}
+
+/* 幅 800px 以下（画面下のナビのとき） */
+@media (max-width: 800px) {
+  .srch-mode-sub { display: none; }
+  .srch-mode { min-height: 46px; }
+}
