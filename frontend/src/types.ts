@@ -88,9 +88,9 @@ export interface NaturalSearchConditions {
   excludedTags: string[]
   query: string
   // character は文に出てきたキャラクター名（書かれたとおり）。名前が合うキャラクターが AniList に
-  // いなかったときは空になり、名前は query に回る
+  // いなかったときは空になり、名前は query に回る。characterNames は AniList で探した名前の候補（ローマ字など）
   character: string
-  characterRomaji: string
+  characterNames: string[] | null
 }
 
 // GET /api/search/natural の応答。AI が使えないときも 200 で従来の検索結果が返り、fallback に理由が入る。

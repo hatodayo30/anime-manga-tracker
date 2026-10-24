@@ -605,7 +605,7 @@ func omitEmpty(vars map[string]any, key string, values []string) {
 	}
 }
 
-// characterQuery はキャラクター名で探し、出演作品を引く（自然文検索のキャラクター名、BACKLOG 9-b）。
+// characterFields はキャラクター検索 1 本ぶんのフィールド（自然文検索のキャラクター名、BACKLOG 9-b）。
 //
 // 2026-10-25 に AniList を直接叩いて確かめたこと:
 //   - 漢字の名前の一部ではほぼ見つからない。「薫子」で当たったのは「和栗薫子」だけで、日本語名が
@@ -614,13 +614,14 @@ func omitEmpty(vars map[string]any, key string, values []string) {
 //     なので search にはローマ字を渡し、名前が合わない結果は呼び出し側で捨てる前提にしている
 //   - 出演作品（media）は type と sort が効き、作品ごとに isAdult と characterRole が取れる。
 //     isAdult で絞る引数は無いので、受け取ってから除く（他の検索の isAdult:false と揃えるため）
+//   - 名前の候補 3 つぶんのキャラクター検索と作品名の検索をエイリアスで 1 本にまとめても、
+//     複雑さの上限には掛からなかった（応答は 125KB ほど）
 //
 // tags は SearchByFilter と同じ条件（minimumTagRank）でここで絞るために取る。
 // キャラクターから引いた作品を、もう一度 AniList でジャンル・タグ検索すると枠を 2 本使うため。
-const characterQuery = `
-query ($search: String, $type: MediaType, $perPage: Int, $mediaPerPage: Int) {
-  Page(page: 1, perPage: $perPage) {
-    characters(search: $search, sort: [SEARCH_MATCH]) {
+const characterFields = `
+    characters(search: %s, sort: [SEARCH_MATCH]) {
+      id
       name { full native alternative }
       favourites
       media(type: $type, sort: [POPULARITY_DESC], perPage: $mediaPerPage) {
@@ -633,8 +634,12 @@ query ($search: String, $type: MediaType, $perPage: Int, $mediaPerPage: Int) {
         }
       }
     }
-  }
-}
+`
+
+// characterTitleFields は Filter.Query（作品名のキーワード）で作品を引き、出演作品をその作品に絞るための ID を取る。
+// perPage は filterPerPage と同じ。続編・劇場版まで含めて同じ作品名の作品はこの中に収まる
+const characterTitleFields = `
+    media(search: $query, type: $type, isAdult: false) { id }
 `
 
 const (
@@ -643,7 +648,27 @@ const (
 	// characterMediaPerPage は 1 人あたりの出演作品。人気順なので、続編・劇場版が多いキャラクターでも
 	// 本編は先頭に来る
 	characterMediaPerPage = 10
+	// maxCharacterNames は 1 本にまとめる名前の候補の数。確かめたのは 3 つまで
+	maxCharacterNames = 3
 )
+
+// buildCharacterQuery は名前の候補ごとのキャラクター検索（c0, c1, ...）と、作品名があればその検索（t）を
+// エイリアスで 1 本のクエリにまとめる。候補ごとに送ると AniList の枠（24 本/分）を候補の数だけ使う。
+func buildCharacterQuery(names int, withTitle bool) string {
+	var params, body strings.Builder
+	params.WriteString("$type: MediaType, $mediaPerPage: Int")
+	for i := range names {
+		fmt.Fprintf(&params, ", $n%d: String", i)
+		fmt.Fprintf(&body, "  c%d: Page(page: 1, perPage: %d) {", i, characterPerPage)
+		fmt.Fprintf(&body, characterFields, fmt.Sprintf("$n%d", i))
+		body.WriteString("  }\n")
+	}
+	if withTitle {
+		params.WriteString(", $query: String")
+		fmt.Fprintf(&body, "  t: Page(page: 1, perPage: %d) {%s  }\n", filterPerPage, characterTitleFields)
+	}
+	return "query (" + params.String() + ") {\n" + body.String() + "}\n"
+}
 
 // CharacterName は AniList のキャラクター名。呼び出し側が「探した名前と合うか」を判定するために返す。
 type CharacterName struct {
@@ -659,81 +684,116 @@ type CharacterMatch struct {
 	Works      []SearchResult
 }
 
-type characterResponse struct {
-	Page struct {
-		Characters []struct {
-			Name struct {
-				Full        string   `json:"full"`
-				Native      string   `json:"native"`
-				Alternative []string `json:"alternative"`
-			} `json:"name"`
-			Favourites int `json:"favourites"`
-			Media      struct {
-				Edges []struct {
-					CharacterRole string `json:"characterRole"`
-					Node          struct {
-						media
-						IsAdult bool `json:"isAdult"`
-						Tags    []struct {
-							Name string `json:"name"`
-							Rank int    `json:"rank"`
-						} `json:"tags"`
-					} `json:"node"`
-				} `json:"edges"`
-			} `json:"media"`
-		} `json:"characters"`
-	} `json:"Page"`
+type characterPage struct {
+	Characters []struct {
+		ID   int `json:"id"`
+		Name struct {
+			Full        string   `json:"full"`
+			Native      string   `json:"native"`
+			Alternative []string `json:"alternative"`
+		} `json:"name"`
+		Favourites int `json:"favourites"`
+		Media      struct {
+			Edges []struct {
+				CharacterRole string `json:"characterRole"`
+				Node          struct {
+					media
+					IsAdult bool `json:"isAdult"`
+					Tags    []struct {
+						Name string `json:"name"`
+						Rank int    `json:"rank"`
+					} `json:"tags"`
+				} `json:"node"`
+			} `json:"edges"`
+		} `json:"media"`
+	} `json:"characters"`
+	Media []struct {
+		ID int `json:"id"`
+	} `json:"media"`
 }
 
-// SearchByCharacter は f.Query をキャラクター名（ローマ字）として探し、出演作品のうち f のジャンル・タグの
-// 条件を満たすものを返す。条件の意味は SearchByFilter と同じ（ジャンル・タグはすべてを含む、
-// タグは minimumTagRank 以上、除外はどれも含まない）。成人向けと、背景（BACKGROUND）としてだけ
-// 出ている作品は除く。ちょい役の作品を「このキャラが出る作品」として出さないため。
+// SearchByCharacter は names（ローマ字や英語の名前の候補。先頭から maxCharacterNames 個）をキャラクター名として探し、
+// 出演作品のうち f の条件を満たすものをキャラクターごとに返す。条件の意味は SearchByFilter と同じ
+// （ジャンル・タグはすべてを含む、タグは minimumTagRank 以上、除外はどれも含まない、Query は作品名で絞る）。
+// 成人向けと、背景（BACKGROUND）としてだけ出ている作品は除く。ちょい役の作品を「このキャラが出る作品」として
+// 出さないため。同じキャラクターが複数の候補で当たっても 1 人にまとめる。
 //
 // AniList はキャラクター名と関係の無い結果も返すので、どのキャラクターを採るかは呼び出し側が
 // CharacterMatch.Name で判定すること。
-func (c *Client) SearchByCharacter(ctx context.Context, f Filter) ([]CharacterMatch, error) {
+func (c *Client) SearchByCharacter(ctx context.Context, names []string, f Filter) ([]CharacterMatch, error) {
 	if !f.MediaType.Valid() {
 		return nil, fmt.Errorf("invalid media type: %s", f.MediaType)
 	}
-	search := strings.TrimSpace(f.Query)
-	if search == "" {
+	var cleaned []string
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" && !slices.Contains(cleaned, n) && len(cleaned) < maxCharacterNames {
+			cleaned = append(cleaned, n)
+		}
+	}
+	if len(cleaned) == 0 {
 		return []CharacterMatch{}, nil
 	}
 
-	var resp characterResponse
-	err := c.do(ctx, characterQuery, map[string]any{
-		"search":       search,
+	title := strings.TrimSpace(f.Query)
+	vars := map[string]any{
 		"type":         strings.ToUpper(string(f.MediaType)),
-		"perPage":      characterPerPage,
 		"mediaPerPage": characterMediaPerPage,
-	}, &resp)
-	if err != nil {
+	}
+	for i, n := range cleaned {
+		vars[fmt.Sprintf("n%d", i)] = n
+	}
+	if title != "" {
+		vars["query"] = title
+	}
+
+	var resp map[string]characterPage
+	if err := c.do(ctx, buildCharacterQuery(len(cleaned), title != ""), vars, &resp); err != nil {
 		return nil, err
 	}
 
-	matches := make([]CharacterMatch, 0, len(resp.Page.Characters))
-	for _, ch := range resp.Page.Characters {
-		var works []media
-		for _, e := range ch.Media.Edges {
-			n := e.Node
-			if n.IsAdult || e.CharacterRole == "BACKGROUND" {
-				continue
-			}
-			tagRanks := make(map[string]int, len(n.Tags))
-			for _, t := range n.Tags {
-				tagRanks[t.Name] = t.Rank
-			}
-			if !matchesFilter(n.Genres, tagRanks, f) {
-				continue
-			}
-			works = append(works, n.media)
+	// 作品名で絞るときは、その検索で出た作品だけを残す。作品名の検索が 0 件なら、
+	// どのキャラクターの作品も条件を満たさない（SearchByFilter で search が 0 件のときと同じ）
+	var titleIDs map[int]bool
+	if title != "" {
+		titleIDs = map[int]bool{}
+		for _, m := range resp["t"].Media {
+			titleIDs[m.ID] = true
 		}
-		matches = append(matches, CharacterMatch{
-			Name:       CharacterName{Full: ch.Name.Full, Native: ch.Name.Native, Alternative: ch.Name.Alternative},
-			Favourites: ch.Favourites,
-			Works:      toSearchResults(f.MediaType, works),
-		})
+	}
+
+	seen := map[int]bool{}
+	matches := []CharacterMatch{}
+	for i := range cleaned {
+		for _, ch := range resp[fmt.Sprintf("c%d", i)].Characters {
+			if seen[ch.ID] {
+				continue
+			}
+			seen[ch.ID] = true
+
+			var works []media
+			for _, e := range ch.Media.Edges {
+				n := e.Node
+				if n.IsAdult || e.CharacterRole == "BACKGROUND" {
+					continue
+				}
+				if titleIDs != nil && !titleIDs[n.ID] {
+					continue
+				}
+				tagRanks := make(map[string]int, len(n.Tags))
+				for _, t := range n.Tags {
+					tagRanks[t.Name] = t.Rank
+				}
+				if !matchesFilter(n.Genres, tagRanks, f) {
+					continue
+				}
+				works = append(works, n.media)
+			}
+			matches = append(matches, CharacterMatch{
+				Name:       CharacterName{Full: ch.Name.Full, Native: ch.Name.Native, Alternative: ch.Name.Alternative},
+				Favourites: ch.Favourites,
+				Works:      toSearchResults(f.MediaType, works),
+			})
+		}
 	}
 	return matches, nil
 }

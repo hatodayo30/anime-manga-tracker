@@ -49,6 +49,7 @@ type fakeAniList struct {
 	characterErr error
 
 	characterCalls     int
+	gotCharacterNames  []string
 	gotCharacterFilter anilist.Filter
 }
 
@@ -58,8 +59,9 @@ func (f *fakeAniList) SearchByFilter(ctx context.Context, filter anilist.Filter)
 	return f.result, f.err
 }
 
-func (f *fakeAniList) SearchByCharacter(ctx context.Context, filter anilist.Filter) ([]anilist.CharacterMatch, error) {
+func (f *fakeAniList) SearchByCharacter(ctx context.Context, names []string, filter anilist.Filter) ([]anilist.CharacterMatch, error) {
 	f.characterCalls++
+	f.gotCharacterNames = names
 	f.gotCharacterFilter = filter
 	return f.characters, f.characterErr
 }
@@ -363,10 +365,10 @@ func ids(items []anilist.SearchResult) []int64 {
 	return out
 }
 
-// キャラクター名があればローマ字でキャラクター検索を呼び、ジャンル・タグの条件も一緒に渡すことを保証する。
+// キャラクター名があれば名前の候補でキャラクター検索を呼び、ジャンル・タグの条件も一緒に渡すことを保証する。
 // 条件を渡さないと「薫子が出る恋愛もの」の恋愛が効かない。作品の条件検索は呼ばない（AniList の枠を 1 本で済ませる）。
 func TestUsecase_Search_CharacterUsesCharacterSearch(t *testing.T) {
-	u, f := newUsecase(nlsearch.Conditions{Character: "薫子", CharacterRomaji: "Kaoruko", Genres: []string{"Comedy"}})
+	u, f := newUsecase(nlsearch.Conditions{Character: "薫子", CharacterNames: []string{"Kaoruko"}, Genres: []string{"Comedy"}})
 	f.anilist.characters = []anilist.CharacterMatch{character("和栗薫子", "Kaoruko Waguri", 5955, work(10, 100))}
 
 	got, err := u.Search(context.Background(), domain.MediaTypeAnime, "薫子っていうキャラが出るコメディ")
@@ -380,7 +382,7 @@ func TestUsecase_Search_CharacterUsesCharacterSearch(t *testing.T) {
 		t.Errorf("unexpected items: %v", ids(got.Items))
 	}
 	gf := f.anilist.gotCharacterFilter
-	if gf.Query != "Kaoruko" || gf.MediaType != domain.MediaTypeAnime || !slices.Equal(gf.Genres, []string{"Comedy"}) {
+	if !slices.Equal(f.anilist.gotCharacterNames, []string{"Kaoruko"}) || gf.Query != "" || gf.MediaType != domain.MediaTypeAnime || !slices.Equal(gf.Genres, []string{"Comedy"}) {
 		t.Errorf("unexpected character filter: %+v", gf)
 	}
 	if f.anilist.calls != 0 {
@@ -391,7 +393,7 @@ func TestUsecase_Search_CharacterUsesCharacterSearch(t *testing.T) {
 // 名前が合わないキャラクターを捨て、書かれた漢字が日本語名に含まれるキャラクターを優先することを保証する。
 // AniList は名前と関係の無い人気キャラクターも返し、ローマ字では読みが同じ別の漢字（香子）も当たる。
 func TestUsecase_Search_CharacterPicksByName(t *testing.T) {
-	u, f := newUsecase(nlsearch.Conditions{Character: "薫子", CharacterRomaji: "Kaoruko"})
+	u, f := newUsecase(nlsearch.Conditions{Character: "薫子", CharacterNames: []string{"Kaoruko"}})
 	f.anilist.characters = []anilist.CharacterMatch{
 		character("和栗薫子", "Kaoruko Waguri", 5955, work(10, 100)),
 		character("五条悟", "Satoru Gojou", 39398, work(20, 900)),   // 名前と関係の無い人気キャラクター
@@ -411,7 +413,7 @@ func TestUsecase_Search_CharacterPicksByName(t *testing.T) {
 
 // 書かれた名前が日本語名に無ければ（ひらがなで書かれたなど）、ローマ字で合うキャラクターを採ることを保証する。
 func TestUsecase_Search_CharacterFallsBackToRomajiMatch(t *testing.T) {
-	u, f := newUsecase(nlsearch.Conditions{Character: "かおるこ", CharacterRomaji: "Kaoruko"})
+	u, f := newUsecase(nlsearch.Conditions{Character: "かおるこ", CharacterNames: []string{"Kaoruko"}})
 	f.anilist.characters = []anilist.CharacterMatch{
 		character("五条悟", "Satoru Gojou", 39398, work(20, 900)),
 		character("花柳香子", "Kaoruko Hanayagi", 251, work(30, 50)),
@@ -430,7 +432,7 @@ func TestUsecase_Search_CharacterFallsBackToRomajiMatch(t *testing.T) {
 // 返す条件からキャラクター名を消すことを保証する。AI が作品名をキャラクター名と取り違えたときの救済で、
 // 画面に「〇〇が出る作品」と出したまま作品名の一致の結果を並べないため。
 func TestUsecase_Search_CharacterNotFoundRetriesAsTitle(t *testing.T) {
-	u, f := newUsecase(nlsearch.Conditions{Character: "ワンピース", CharacterRomaji: "Wan Piisu"})
+	u, f := newUsecase(nlsearch.Conditions{Character: "ワンピース", CharacterNames: []string{"Wan Piisu"}})
 	f.anilist.characters = []anilist.CharacterMatch{character("五条悟", "Satoru Gojou", 39398, work(20, 900))}
 
 	got, err := u.Search(context.Background(), domain.MediaTypeAnime, "ワンピースっていうキャラ")
@@ -450,7 +452,7 @@ func TestUsecase_Search_CharacterNotFoundRetriesAsTitle(t *testing.T) {
 
 // キャラクター検索の失敗は、他の失敗と同じく従来の検索に落とすことを保証する（失敗の扱いの方針）。
 func TestUsecase_Search_CharacterSearchFailureFallsBack(t *testing.T) {
-	u, f := newUsecase(nlsearch.Conditions{Character: "薫子", CharacterRomaji: "Kaoruko"})
+	u, f := newUsecase(nlsearch.Conditions{Character: "薫子", CharacterNames: []string{"Kaoruko"}})
 	f.anilist.characterErr = errors.New("anilist down")
 
 	got, err := u.Search(context.Background(), domain.MediaTypeAnime, "薫子が出る")
@@ -462,7 +464,7 @@ func TestUsecase_Search_CharacterSearchFailureFallsBack(t *testing.T) {
 	}
 }
 
-// ローマ字の無いキャラクター名は、キャラクター検索に使えないので作品名のキーワードに回すことを保証する。
+// 名前の候補の無いキャラクター名は、キャラクター検索に使えないので作品名のキーワードに回すことを保証する。
 func TestUsecase_Search_CharacterWithoutRomajiBecomesQuery(t *testing.T) {
 	u, f := newUsecase(nlsearch.Conditions{Character: "薫子"})
 
@@ -475,5 +477,48 @@ func TestUsecase_Search_CharacterWithoutRomajiBecomesQuery(t *testing.T) {
 	}
 	if got.Conditions == nil || got.Conditions.Character != "" {
 		t.Errorf("unexpected conditions: %+v", got.Conditions)
+	}
+}
+
+// 名前の候補のどれか 1 つと合えば採ることを保証する。1 つ目の読みが外れても、フルネームや英語名で当たれば見つかる。
+func TestUsecase_Search_CharacterMatchesAnyName(t *testing.T) {
+	u, f := newUsecase(nlsearch.Conditions{Character: "るふぃ", CharacterNames: []string{"Rufi", "Monkey D. Luffy"}})
+	f.anilist.characters = []anilist.CharacterMatch{
+		character("モンキー・D・ルフィ", "Luffy Monkey", 35999, work(50, 999)),
+		character("五条悟", "Satoru Gojou", 39398, work(20, 900)),
+	}
+
+	got, err := u.Search(context.Background(), domain.MediaTypeAnime, "るふぃが出る")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := []int64{50}; !slices.Equal(ids(got.Items), want) {
+		t.Errorf("got %v, want %v", ids(got.Items), want)
+	}
+}
+
+// 文に作品名もあれば、キャラクター検索にその作品名を渡して出演作品を絞ることを保証する（「呪術廻戦の五条」）。
+func TestUsecase_Search_CharacterWithTitlePassesQuery(t *testing.T) {
+	u, f := newUsecase(nlsearch.Conditions{Character: "五条", CharacterNames: []string{"Gojou"}, Query: "呪術廻戦"})
+	f.anilist.characters = []anilist.CharacterMatch{character("五条悟", "Satoru Gojou", 39398, work(20, 900))}
+
+	if _, err := u.Search(context.Background(), domain.MediaTypeAnime, "呪術廻戦の五条"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if f.anilist.gotCharacterFilter.Query != "呪術廻戦" {
+		t.Errorf("expected title query to be passed, got %+v", f.anilist.gotCharacterFilter)
+	}
+}
+
+// 名前の候補は空白を落とし、重複を除いて 3 つまでにすることを保証する。AniList に 1 本で送れるのは 3 つまでと確かめてある。
+func TestUsecase_Search_LimitsCharacterNames(t *testing.T) {
+	u, f := newUsecase(nlsearch.Conditions{Character: "薫子", CharacterNames: []string{" Kaoruko ", "Kaoruko", "", "Waguri Kaoruko", "Kaoru", "Kao"}})
+	f.anilist.characters = []anilist.CharacterMatch{character("和栗薫子", "Kaoruko Waguri", 5955, work(10, 100))}
+
+	if _, err := u.Search(context.Background(), domain.MediaTypeAnime, "薫子"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := []string{"Kaoruko", "Waguri Kaoruko", "Kaoru"}; !slices.Equal(f.anilist.gotCharacterNames, want) {
+		t.Errorf("got %v, want %v", f.anilist.gotCharacterNames, want)
 	}
 }

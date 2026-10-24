@@ -120,22 +120,22 @@ func toStrings(v any) []string {
 	return out
 }
 
-// キャラクター名とそのローマ字を、作品名のキーワード（query）とは別の欄として受け取ることを保証する。
+// キャラクター名と名前の候補を、作品名のキーワード（query）とは別の欄として受け取ることを保証する。
 // query は作品検索に渡るので、キャラクター名が入ると 0 件になる。
 func TestParseSearch_MapsCharacter(t *testing.T) {
-	fake := &recordingAnthropic{text: `{"mediaType":"unspecified","genres":[],"tags":[],"excludedGenres":[],"excludedTags":[],"query":"","character":"薫子","characterRomaji":"Kaoruko"}`}
+	fake := &recordingAnthropic{text: `{"mediaType":"unspecified","genres":[],"tags":[],"excludedGenres":[],"excludedTags":[],"query":"","character":"薫子","characterNames":["Kaoruko","Waguri Kaoruko"]}`}
 	c := newRecordingClient(t, fake)
 
 	got, err := c.ParseSearch(context.Background(), "薫子っていうキャラが出る", domain.MediaTypeAnime, nlTaxonomy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.Character != "薫子" || got.CharacterRomaji != "Kaoruko" || got.Query != "" {
+	if got.Character != "薫子" || !slices.Equal(got.CharacterNames, []string{"Kaoruko", "Waguri Kaoruko"}) || got.Query != "" {
 		t.Errorf("unexpected conditions: %+v", got)
 	}
 
 	required := toStrings(dig(t, fake.body, "output_config", "format", "schema", "required"))
-	for _, field := range []string{"character", "characterRomaji"} {
+	for _, field := range []string{"character", "characterNames"} {
 		if !slices.Contains(required, field) {
 			t.Errorf("expected %q to be required, got %v", field, required)
 		}

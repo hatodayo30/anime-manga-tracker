@@ -1,6 +1,7 @@
 package anilist
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
@@ -116,5 +117,23 @@ func TestMatchesFilter(t *testing.T) {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// 名前の候補と作品名の検索を、エイリアスで 1 本のクエリにまとめることを保証する。
+// 候補ごとに送ると AniList の枠（24 本/分）を候補の数だけ使う。
+func TestBuildCharacterQuery(t *testing.T) {
+	q := buildCharacterQuery(3, true)
+	for _, want := range []string{"c0: Page", "c1: Page", "c2: Page", "t: Page", "$n2: String", "$query: String", "search: $n1"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("expected query to contain %q", want)
+		}
+	}
+
+	q = buildCharacterQuery(1, false)
+	for _, unwanted := range []string{"c1: Page", "t: Page", "$query"} {
+		if strings.Contains(q, unwanted) {
+			t.Errorf("expected query not to contain %q", unwanted)
+		}
 	}
 }
