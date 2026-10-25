@@ -737,8 +737,8 @@ aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
 aws ecs update-service --cluster amt-cluster --service amt-service \
   --task-definition anime-manga-tracker
 aws ecs wait services-stable --cluster amt-cluster --services amt-service
-aws logs tail /ecs/anime-manga-tracker --since 5m | grep 'ai translate'
-# ai translate: enabled (daily limit 2000000 tokens)
+aws logs tail /ecs/anime-manga-tracker --since 5m | grep ' ai: '
+# ai: enabled (daily limit 2000000 tokens)
 ```
 
 - **IAM の変更は要らない。** Step 6-1 のインラインポリシーが `parameter/amt/prod/*` を許可している
@@ -781,16 +781,33 @@ aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
 aws ecs update-service --cluster amt-cluster --service amt-service \
   --task-definition anime-manga-tracker
 aws ecs wait services-stable --cluster amt-cluster --services amt-service
+# new-releases-warm は全 6 ジャンルを 1.5 秒間隔で引くので 1 分半ほどかかる。起動から 2 分待ってから見る
 aws logs tail /ecs/anime-manga-tracker --since 5m | grep -E 'rakuten|new-releases-warm'
 # rakuten: enabled
-# scheduler: new-releases-warm done in 15.2s
+# scheduler: new-releases-warm done in 1m16.6s
 ```
+
+**楽天のアプリ設定と、アプリから送る `Referer` を合わせる（2026-10-25 に確かめた）。**
+
+- 楽天ウェブサービスのアプリの種類は「ウェブアプリケーション」にし、「許可されたウェブサイト」に本番のドメインを入れる。
+  「API/バックエンドサービス」は許可を IP アドレスで登録する形で、タスクのパブリック IP はデプロイや Spot の中断のたびに変わるので使えない
+- アプリはサーバーから楽天を呼ぶときに `Referer` と `Origin` を付ける。値は `RAKUTEN_REFERER`（既定 `https://mirokuapp.com/`）。
+  無いと 403（`REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING`）になる。**本番のドメインが `mirokuapp.com` でなければ、
+  `environment` に `RAKUTEN_REFERER=https://<ドメイン>/` を足す**（秘密ではない）
+
+**アフィリエイト ID も入れる。** 楽天の規約（第 3 条）は、楽天アフィリエイトの対象の商品ページへのリンクを
+アフィリエイト経由で作るよう定めている（BACKLOG 11-b「規約で確かめたこと」）。`RAKUTEN_AFFILIATE_ID` を
+`environment` に足すと、新刊の「楽天ブックスで見る」がアフィリエイト経由のリンクになる。入れていない間は、
+起動ログが `rakuten: enabled (RAKUTEN_AFFILIATE_ID is not set: ...)` になる。手順は Phase 2 の手順書の
+「[2026-10-25 の機能を本番に出す](DEPLOY-AWS-PHASE2.md#2026-10-25-の機能を本番に出す)」にまとめた
 
 - **IAM の変更は要らない。** Step 6-1 のインラインポリシーが `parameter/amt/prod/*` を許可している
 - **`environment` には書かない。** タスク定義は IAM さえあれば誰でも読める（Step 4 と同じ理由）
-- `new-releases-warm` が `failed` になっていたら、エラー文の楽天のエラーコード（`wrong_parameter` など）を見る。
-  キーを入れて最初の 1 回は、実際の応答の形（`items` の綴り・`salesDate` の表記）が想定どおりかも確かめる
-  （BACKLOG 11-b「残っている穴」）
+- `new-releases-warm` が `failed` になっていたら、エラー文の楽天のエラーコードを見る
+  - `403 ... REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING`: `RAKUTEN_REFERER` のドメインが、楽天のアプリの
+    「許可されたウェブサイト」に入っていない
+  - `429 Too Many Requests`: 楽天のレート制限。間隔（`rakuten.minRequestInterval`、1.5 秒）を広げる。
+    2026-10-25 にちょうど 1 秒間隔で 429 になったので 1.5 秒にした
 
 ### 実行中のコンテナに入る（ECS Exec）
 
