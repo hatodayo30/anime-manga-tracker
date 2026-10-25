@@ -141,6 +141,7 @@ func NewRouter(h Handlers) *echo.Echo {
 	e.GET("/api/home/season-anime", h.Home.SeasonAnime, publicAPILimit)
 	e.GET("/api/home/trending", h.Home.Trending, publicAPILimit)
 	e.GET("/api/home/trending-manga", h.Home.TrendingManga, publicAPILimit)
+	e.GET("/api/home/new-series", h.Home.NewSeries, publicAPILimit)
 	// translate は未ログインでも使えるが、ログイン済みなら AI 翻訳を使うので利用者を解決しておく
 	e.POST("/api/translate", h.Translate.Translate, publicAPILimit, h.OptionalUser)
 	// 自然文検索は AI を呼ぶのでログイン必須（BACKLOG 9「決めたこと」）。費用を守っているのは

@@ -39,6 +39,17 @@ const NAV_ITEMS = [
     ),
   },
   {
+    to: '/new',
+    label: '新着',
+    bottomLabel: '新着',
+    icon: (
+      <svg width="17" height="17" viewBox="0 0 256 256" fill="none" stroke="currentColor" strokeWidth="16">
+        <path d="M128 32v32M128 192v32M32 128h32M192 128h32M60 60l23 23M173 173l23 23M60 196l23-23M173 83l23-23" strokeLinecap="round" />
+        <circle cx="128" cy="128" r="36" />
+      </svg>
+    ),
+  },
+  {
     to: '/recommend',
     label: 'おすすめ',
     bottomLabel: 'おすすめ',

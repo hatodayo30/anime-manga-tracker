@@ -73,3 +73,14 @@ func (h *HomeHandler) TrendingManga(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, items)
 }
+
+// NewSeries handles GET /api/home/new-series
+// 「新着」タブの新連載。最近始まった日本の漫画の連載を人気順に返す。
+func (h *HomeHandler) NewSeries(c echo.Context) error {
+	items, err := h.usecase.NewSeriesManga(c.Request().Context())
+	if err != nil {
+		c.Logger().Errorf("home: new series: %v", err)
+		return writeError(c, http.StatusBadGateway, "anilist request failed")
+	}
+	return c.JSON(http.StatusOK, items)
+}
