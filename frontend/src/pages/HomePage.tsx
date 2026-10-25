@@ -124,7 +124,6 @@ export function HomePage() {
         </div>
       )}
 
-      {kind === 'manga' && <MagazineShelf ranking={ranking} onOpen={(item) => openWorkModal({ item, mediaType: 'manga', record: libraryByAniListId.get(item.anilistId) || null, onChange: reload })} />}
 
       {user && <AIRecommendShelf kind={kind} library={library} onOpen={(item) => openWorkModal({ item, mediaType: kind, record: null, onChange: reload })} />}
 
@@ -357,59 +356,6 @@ function RankingPoster({ item, rank, onClick }: { item: MangaRankingItem; rank: 
           {Math.round(item.members / 1000)}千人が記録
         </div>
       ) : null}
-    </div>
-  )
-}
-
-function MagazineShelf({ ranking, onOpen }: { ranking: MangaRankingItem[]; onOpen: (item: MangaRankingItem) => void }) {
-  const [activeMagazine, setActiveMagazine] = useState<string | null>(null)
-
-  const counts = new Map<string, number>()
-  for (const item of ranking) {
-    for (const mag of item.magazines || []) counts.set(mag, (counts.get(mag) || 0) + 1)
-  }
-  const magazines = Array.from(counts.keys()).sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0))
-
-  if (magazines.length === 0) {
-    return (
-      <div className="shelf">
-        <div className="shelf-head">
-          <h5 className="shelf-h">掲載誌で探す</h5>
-        </div>
-        <p className="text-muted" style={{ fontSize: 13 }}>
-          掲載誌の情報を取得できませんでした。
-        </p>
-      </div>
-    )
-  }
-
-  const active = activeMagazine && counts.has(activeMagazine) ? activeMagazine : magazines[0]
-  const works = ranking.filter((item) => (item.magazines || []).includes(active))
-
-  return (
-    <div className="shelf">
-      <div className="shelf-head">
-        <h5 className="shelf-h">掲載誌で探す</h5>
-      </div>
-      <p className="text-muted shelf-desc">{active} に載っている作品</p>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 'var(--space-3)' }}>
-        {magazines.map((mag) => (
-          <button
-            key={mag}
-            type="button"
-            className={`tag ${mag === active ? 'tag-accent' : 'tag-outline'}`}
-            onClick={() => setActiveMagazine(mag)}
-          >
-            {mag} ({counts.get(mag)})
-          </button>
-        ))}
-      </div>
-      <div className="poster-row">
-        {works.map((item) => {
-          const score = formatScore(item.score)
-          return <PosterCard key={item.anilistId} item={item} caption={score ? `★${score}` : null} onClick={() => onOpen(item)} />
-        })}
-      </div>
     </div>
   )
 }

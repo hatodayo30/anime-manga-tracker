@@ -3,6 +3,7 @@ import type {
   LibraryRecord,
   Me,
   MangaRankingItem,
+  NewSeriesItem,
   NaturalSearchResult,
   NewRecordInput,
   RelatedWork,
@@ -70,6 +71,7 @@ export const api = {
     request<AniListItem[]>('/home/season-anime' + buildQuery({ season, year: year ? String(year) : undefined })),
   trending: () => request<AniListItem[]>('/home/trending'),
   trendingManga: () => request<MangaRankingItem[]>('/home/trending-manga'),
+  newSeries: () => request<NewSeriesItem[]>('/home/new-series'),
 
   getMe: () => request<Me>('/auth/me'),
   login: (body: { email: string; password: string }) =>

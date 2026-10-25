@@ -28,6 +28,14 @@ const seasonBrowseCacheTTL = 30 * time.Minute
 // 際限なく増えうるため、上限を設けてメモリ使用量を一定に保つ。
 const seasonBrowseCacheMaxEntries = 64
 
+// newSeriesWindow は「新着」タブの新連載に出す、連載開始からの日数。漫画の連載は話数がたまるまで
+// AniList の利用者が増えにくく、30 日だと人気順の上位がほとんど空になるので、1 シーズンぶん（約 3 か月）にした。
+// newSeriesCacheTTL は新連載のキャッシュの保持時間。顔ぶれは日単位でしか変わらないので長めに取る。
+const (
+	newSeriesWindow   = 90 * 24 * time.Hour
+	newSeriesCacheTTL = time.Hour
+)
+
 // WarmInterval はホーム画面向けキャッシュを定期リフレッシュする間隔。cacheTTL より短くして、
 // TTLが切れて利用者が古い値を踏む前に、裏で中身が入れ替わっているようにする。
 // AniList/Jikan への負荷は Warm 1回あたり AniList 3本 + Jikan 10本で、
@@ -56,6 +64,7 @@ type Usecase struct {
 	seasonBrowseCache  *cache.TTLCache[[]anilist.SearchResult]
 	trendingCache      *cache.TTLCache[[]anilist.SearchResult]
 	trendingMangaCache *cache.TTLCache[[]MangaRankingItem]
+	newSeriesCache     *cache.TTLCache[[]anilist.NewSeries]
 }
 
 func NewUsecase(anilistGateway AniListGateway, jikanGateway JikanGateway) *Usecase {
@@ -66,6 +75,7 @@ func NewUsecase(anilistGateway AniListGateway, jikanGateway JikanGateway) *Useca
 		seasonBrowseCache:  cache.NewBounded[[]anilist.SearchResult](seasonBrowseCacheTTL, seasonBrowseCacheMaxEntries),
 		trendingCache:      cache.New[[]anilist.SearchResult](cacheTTL),
 		trendingMangaCache: cache.New[[]MangaRankingItem](cacheTTL),
+		newSeriesCache:     cache.New[[]anilist.NewSeries](newSeriesCacheTTL),
 	}
 }
 
@@ -92,6 +102,16 @@ func (u *Usecase) TrendingAnime(ctx context.Context) ([]anilist.SearchResult, er
 // ランキング順位・会員数・掲載誌を補って返す（キャッシュあり）。
 func (u *Usecase) TrendingManga(ctx context.Context) ([]MangaRankingItem, error) {
 	return u.trendingMangaCache.Get(ctx, "", u.fetchTrendingManga)
+}
+
+// NewSeriesManga は「新着」タブ向けに、最近（newSeriesWindow 以内に）始まった日本の漫画の連載を
+// 人気順に返す（キャッシュあり）。
+//
+// Warm では温めない。ホーム画面には出ないので、タブを開いた人がいるときだけ AniList を 1 本使えばよい。
+func (u *Usecase) NewSeriesManga(ctx context.Context) ([]anilist.NewSeries, error) {
+	return u.newSeriesCache.Get(ctx, "", func(ctx context.Context) ([]anilist.NewSeries, error) {
+		return u.anilist.NewSeriesManga(ctx, time.Now().Add(-newSeriesWindow))
+	})
 }
 
 // Warm はホーム画面向けキャッシュ（今季アニメ・人気アニメ・話題の漫画）をTTLの残りに関わらず
