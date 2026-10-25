@@ -8,7 +8,7 @@ Go (Echo) のシングルバイナリが API と React 製フロントエンド�
 
 ## 主な機能
 
-- **ホーム** — 今週放送の人気アニメ TOP10、曜日別の放送スケジュール、話題の漫画 TOP10（ログイン不要）
+- **ホーム** — 今週放送の人気アニメ TOP10、曜日別の放送スケジュール、話題の漫画 TOP10
 - **シーズン一覧** — 年（2020 年以降）とシーズンを選んで放送作品をブラウズ（40 件を 20 件 × 2 ページ）
 - **検索** — AniList からアニメ / 漫画を検索してライブラリに追加
 - **マイライブラリ** — 「見たい / 見てる / 見た」のステータス管理、進捗（アニメ=話数・漫画=巻数）、
@@ -127,8 +127,7 @@ psql "$DATABASE_URL" -c "DELETE FROM applied_migrations WHERE version = 4"
 
 ## API
 
-認証が必要なエンドポイント（`/api/records/*`）はセッション Cookie を送る必要があります。
-それ以外はログイン不要です。
+`/api/auth/*` と `/healthz` 以外は、すべてログイン（セッション Cookie）が必要です。未ログインなら 401 を返します。
 
 | メソッド | パス | 説明 |
 | --- | --- | --- |
@@ -148,7 +147,7 @@ psql "$DATABASE_URL" -c "DELETE FROM applied_migrations WHERE version = 4"
 | `GET` | `/api/home/trending` | 人気アニメ |
 | `GET` | `/api/home/trending-manga` | 人気漫画（Jikan でランキング・掲載誌を補完） |
 | `POST` | `/api/translate` | テキストの機械翻訳 |
-| `GET` | `/api/new-releases/comics` | 直近 1 週間に発売されたコミック（楽天ブックス、ログイン必須。キーが無ければ `configured: false`） |
+| `GET` | `/api/new-releases/comics` | 直近 1 週間に発売されたコミック（楽天ブックス。キーが無ければ `configured: false`） |
 | `GET` | `/healthz` | ヘルスチェック（DB 疎通のみ確認。`{"status":"ok"}` / 失敗時 503） |
 
 `/api/*` と `/healthz` 以外のパスは `frontend/dist` の静的ファイルにフォールバックします（SPA ルーティング）。

@@ -20,9 +20,8 @@ func TestSignUpAndLoginShareRateLimit(t *testing.T) {
 	// リポジトリには届かない。ルート登録に要るミドルウェアは素通しにしておく
 	passThrough := func(next echo.HandlerFunc) echo.HandlerFunc { return next }
 	e := handler.NewRouter(handler.Handlers{
-		Auth:         handler.NewAuthHandler(auth.NewService(nil, nil), false),
-		RequireUser:  passThrough,
-		OptionalUser: passThrough,
+		Auth:        handler.NewAuthHandler(auth.NewService(nil, nil), false),
+		RequireUser: passThrough,
 	})
 
 	post := func(path string) int {
@@ -46,5 +45,44 @@ func TestSignUpAndLoginShareRateLimit(t *testing.T) {
 	}
 	if code := post("/api/auth/signup"); code != http.StatusTooManyRequests {
 		t.Errorf("6th signup: status = %d, want %d", code, http.StatusTooManyRequests)
+	}
+}
+
+// 外部 API を呼ぶ /api/* はすべて RequireUser の内側にあることを保証する（BACKLOG 4-a の 4）。
+// 未ログインで叩けると、AniList のプロセス全体の枠（24 本/分）や Claude の費用を誰でもただで使い潰せる。
+// ルートを足すときに RequireUser を渡し忘れると、ここで落ちる。
+func TestExternalAPIRoutesRequireLogin(t *testing.T) {
+	deny := func(echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error { return c.NoContent(http.StatusUnauthorized) }
+	}
+	// ハンドラは呼ばれる前に deny で止まるので、中身は空でよい
+	e := handler.NewRouter(handler.Handlers{RequireUser: deny})
+
+	routes := []struct{ method, path string }{
+		{http.MethodGet, "/api/search?type=anime&q=x"},
+		{http.MethodGet, "/api/search/natural?type=anime&q=x"},
+		{http.MethodGet, "/api/anilist/media?type=anime&ids=1"},
+		{http.MethodGet, "/api/anilist/relations?id=1"},
+		{http.MethodGet, "/api/recommendations?type=anime&genres=Action"},
+		{http.MethodGet, "/api/recommendations/ai?type=anime"},
+		{http.MethodGet, "/api/home/season-anime"},
+		{http.MethodGet, "/api/home/trending"},
+		{http.MethodGet, "/api/home/trending-manga"},
+		{http.MethodGet, "/api/home/new-series"},
+		{http.MethodPost, "/api/translate"},
+		{http.MethodGet, "/api/new-releases/comics"},
+		{http.MethodGet, "/api/books/latest-volume?title=x"},
+		{http.MethodGet, "/api/records"},
+	}
+	for _, r := range routes {
+		t.Run(r.method+" "+r.path, func(t *testing.T) {
+			req := httptest.NewRequest(r.method, r.path, nil)
+			req.RemoteAddr = "203.0.113.2:12345"
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("status = %d, want %d (route is reachable without login)", rec.Code, http.StatusUnauthorized)
+			}
+		})
 	}
 }

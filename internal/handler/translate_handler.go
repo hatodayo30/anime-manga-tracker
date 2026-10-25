@@ -55,7 +55,8 @@ const maxTranslateTitleBytes = 300
 // 作品モーダルのあらすじを表示言語（JA）に合わせて翻訳するために使う。
 // title は作品の表示名で、AI 翻訳に作品名の表記を合わせさせるために使う（省略可）。
 // あらすじは数百〜千文字を超えることがあるため、GETクエリではなくPOSTボディで受け取る。
-// ルーターで OptionalUser を被せており、ログイン済みのときだけ AI 翻訳を使う（BACKLOG 9-a）。
+// ルーターで RequireUser を被せているので、常にログイン済み（BACKLOG 4-a の 4、2026-10-25）。usecase には
+// ログインの有無を渡したままにしている。未ログインなら AI を使わない、という判断は usecase の側にあるため（BACKLOG 9-a）。
 func (h *TranslateHandler) Translate(c echo.Context) error {
 	var in translateRequest
 	if err := c.Bind(&in); err != nil {
