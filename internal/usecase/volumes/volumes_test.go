@@ -141,3 +141,24 @@ func TestLatest_GatewayError(t *testing.T) {
 		t.Errorf("got %v, want %v", err, wantErr)
 	}
 }
+
+// 楽天に書名が 1 冊も無いときだけ NoBooks を立てることを保証する。題名を含む本はあるが巻の番号が合わない
+// （外伝だけ、など）ときは立てない。画面はこれで「単行本は見つかりませんでした」を出し分ける。
+func TestLatest_NoBooks(t *testing.T) {
+	got, err := volumes.NewUsecase(&fakeGateway{pages: [][]rakuten.Book{{}}}, now).Latest(context.Background(), "森野さんだるがらむ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.NoBooks || got.Found {
+		t.Errorf("got %+v, want NoBooks", got)
+	}
+
+	gw := &fakeGateway{pages: [][]rakuten.Book{{b("呪術廻戦≡ 3", "2026年05月01日")}}}
+	got, err = volumes.NewUsecase(gw, now).Latest(context.Background(), "呪術廻戦")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.NoBooks || got.Found {
+		t.Errorf("got %+v, want neither NoBooks nor Found", got)
+	}
+}

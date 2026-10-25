@@ -55,6 +55,10 @@ type Result struct {
 	LatestVolume int `json:"latestVolume,omitempty"`
 	// SalesDate はその巻の発売日（YYYY-MM-DD）
 	SalesDate string `json:"salesDate,omitempty"`
+	// NoBooks は楽天で書名に作品名を含む漫画が 1 冊も無かったこと。画面は「単行本は見つかりませんでした」と出す。
+	// 始まったばかりの連載で単行本がまだ出ていないことが多いが、題名の表記が楽天と違うだけのこともあるので、
+	// 「まだ出ていない」とは言い切らない。題名は含むが巻の番号が合わなかったとき（外伝だけ、など）は false
+	NoBooks bool `json:"noBooks,omitempty"`
 }
 
 type Usecase struct {
@@ -95,6 +99,10 @@ func (u *Usecase) fetch(ctx context.Context, title, key string) (Result, error) 
 		pg, err := u.gateway.ComicsByTitle(ctx, strings.TrimSpace(title), page)
 		if err != nil {
 			return Result{}, err
+		}
+		if page == 1 && len(pg.Items) == 0 {
+			result.NoBooks = true
+			break
 		}
 		for _, b := range pg.Items {
 			vol, ok := volumeOf(key, b.Title)

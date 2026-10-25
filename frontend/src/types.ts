@@ -84,6 +84,8 @@ export interface LatestVolumeResult {
   found: boolean
   latestVolume?: number
   salesDate?: string
+  // 楽天に書名が 1 冊も無かった（始まったばかりで単行本がまだ無いことが多い）
+  noBooks?: boolean
 }
 
 export interface MangaRankingItem extends AniListItem {

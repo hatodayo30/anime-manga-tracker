@@ -254,6 +254,8 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const scoreLabel = formatScore(item.score)
   // AniList に巻数が無いときだけ、楽天で数えた既刊を出す
   const knownLatest = !total && latestVolume?.found && latestVolume.latestVolume ? latestVolume.latestVolume : null
+  // 楽天に書名が 1 冊も無かった。題名の表記が違うだけのこともあるので「まだ出ていない」とは言い切らない
+  const noBooks = !total && !knownLatest && !!latestVolume?.noBooks
   const metaParts = [
     mediaType === 'anime' ? 'アニメ' : '漫画',
     total ? `全${total}${unit}` : knownLatest ? `連載中（既刊${knownLatest}${unit}）` : '連載中',
@@ -299,8 +301,13 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
               {metaParts.join('・')}
               {supplementalInfo ? ` ・ ${supplementalInfo}` : ''}
             </div>
-            {knownLatest && (
-              // 楽天ウェブサービスのクレジット表示（必須）。既刊の巻数は楽天ブックスで数えているため
+            {noBooks && (
+              <div className="text-muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 10 }}>
+                単行本は見つかりませんでした
+              </div>
+            )}
+            {(knownLatest || noBooks) && (
+              // 楽天ウェブサービスのクレジット表示（必須）。既刊の巻数・単行本の有無は楽天ブックスで調べているため
               <div style={{ fontSize: 10, marginTop: -6, marginBottom: 10 }}>
                 {/* eslint-disable-next-line react/jsx-no-target-blank -- 楽天のガイドの HTML をそのまま使う */}
                 <a href="https://developers.rakuten.com/" target="_blank">
