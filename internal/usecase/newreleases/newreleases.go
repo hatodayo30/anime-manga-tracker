@@ -226,7 +226,7 @@ func (u *Usecase) fetchGenre(ctx context.Context, g genre, from, to time.Time, s
 			return nil, false, err
 		}
 		for _, b := range pg.Items {
-			d, approx, ok := parseSalesDate(b.SalesDate)
+			d, approx, ok := ParseSalesDate(b.SalesDate)
 			if !ok || d.Before(from) || d.After(to) {
 				continue
 			}
@@ -300,7 +300,7 @@ func passedBefore(pg *rakuten.Page, day time.Time) bool {
 
 func lastDefiniteDate(pg *rakuten.Page) (time.Time, bool) {
 	for i := len(pg.Items) - 1; i >= 0; i-- {
-		if d, _, ok := parseSalesDate(pg.Items[i].SalesDate); ok {
+		if d, _, ok := ParseSalesDate(pg.Items[i].SalesDate); ok {
 			return d, true
 		}
 	}
@@ -309,7 +309,7 @@ func lastDefiniteDate(pg *rakuten.Page) (time.Time, bool) {
 
 var salesDatePattern = regexp.MustCompile(`^(\d{4})年(\d{1,2})月(\d{1,2})日(.*)$`)
 
-// parseSalesDate は楽天の salesDate を日付にする。
+// ParseSalesDate は楽天の salesDate を日付にする。既刊の巻数（usecase/volumes）でも同じ扱いにするため公開している。
 //
 // 扱いを決めたこと:
 //   - 「YYYY年MM月DD日」は確定した発売日として使う
@@ -319,7 +319,7 @@ var salesDatePattern = regexp.MustCompile(`^(\d{4})年(\d{1,2})月(\d{1,2})日(.
 //     まだ出ていない本が新刊の欄に並ぶ
 //   - 「YYYY年MM月DD日以降」のように日の後ろに「頃」以外が付くものも捨てる。「以降」は下限でしかなく、
 //     その日に出たとは言えない
-func parseSalesDate(s string) (date time.Time, approximate bool, ok bool) {
+func ParseSalesDate(s string) (date time.Time, approximate bool, ok bool) {
 	m := salesDatePattern.FindStringSubmatch(strings.TrimSpace(s))
 	if m == nil {
 		return time.Time{}, false, false

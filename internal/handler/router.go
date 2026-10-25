@@ -29,6 +29,8 @@ type Handlers struct {
 
 	// NewReleases は「新着」タブの新刊（BACKLOG 11-b）。
 	NewReleases *NewReleasesHandler
+	// Volumes は漫画の既刊の巻数（BACKLOG 11-c）。
+	Volumes *VolumesHandler
 }
 
 // レート制限の値。キーはクライアント IP（NewRouter の IPExtractor を参照）。
@@ -157,6 +159,8 @@ func NewRouter(h Handlers) *echo.Echo {
 	// 新刊は「新着」タブ（ログインしてから使う画面）向けなのでログイン必須にする。楽天を叩くのは
 	// キャッシュの取り直しだけで、利用者のリクエストは上流に届かないので IP 単位の制限は掛けない
 	e.GET("/api/new-releases/comics", h.NewReleases.Comics, h.RequireUser)
+	// 楽天への問い合わせが利用者のリクエストで起きるので、ログイン必須にして IP 単位の制限も掛ける
+	e.GET("/api/books/latest-volume", h.Volumes.LatestVolume, publicAPILimit, h.RequireUser)
 
 	// login は全体の制限に加えて専用の厳しい制限を重ねる（全体の 1 本としても数える）。
 	// signup にも同じ loginLimit を重ねる。理由は 2 つ:

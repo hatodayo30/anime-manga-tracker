@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
 import { STATUS_LABELS, activateOnKey, colorForTitle, formatScore, translateGenre, translateRelation, unitFor, type MediaKind, type Status } from '../lib/util'
-import type { LibraryRecord, RelatedWork } from '../types'
+import type { LatestVolumeResult, LibraryRecord, RelatedWork } from '../types'
 import { Thumb } from './Thumb'
 import type { OpenWorkModalOptions, WorkModalItem } from './WorkModalContext'
 
@@ -41,6 +41,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const [awaitingTranslation, setAwaitingTranslation] = useState(() => !!item.synopsis)
   const [freshInfo, setFreshInfo] = useState<FreshInfo | null>(null)
   const [relatedWorks, setRelatedWorks] = useState<RelatedWork[] | null>(null)
+  const [latestVolume, setLatestVolume] = useState<LatestVolumeResult | null>(null)
 
   // 依存配列は意図的に空: このコンポーネントは開いた作品ごとにkeyで再マウントされるため、
   // マウント時に一度だけ取得すればよい（item/mediaTypeがこのインスタンス内で変わることはない）。
@@ -75,6 +76,23 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
       cancelled = true
     }
   }, [])
+
+  // AniList に巻数の無い漫画（連載中はほとんどそう）は、楽天ブックスで既刊の巻数を数えて表示する（BACKLOG 11-c）。
+  // 表示にだけ使い、記録の total には入れない（楽天の規約が取得した情報の保存を制限しているため）。
+  // 楽天への問い合わせはログインが要り、1.5 秒に 1 本しか送れないので、AniList に巻数があるときは呼ばない
+  useEffect(() => {
+    if (mediaType !== 'manga' || item.total != null || !user) return
+    let cancelled = false
+    api
+      .latestVolume(item.title)
+      .then((r) => {
+        if (!cancelled) setLatestVolume(r)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [mediaType, item.total, item.title, user])
 
   // AniListの最新情報と保存済みの総数（アニメ=話数 / 漫画=巻数）がズレていたら同期する。
   // 進捗バーと「全巻/全話読了でdoneへ」の判定がDBの値だけを見るライブラリ画面でも
@@ -234,7 +252,12 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
   const progressCap = airingEp != null ? airingEp : total
 
   const scoreLabel = formatScore(item.score)
-  const metaParts = [mediaType === 'anime' ? 'アニメ' : '漫画', total ? `全${total}${unit}` : '連載中']
+  // AniList に巻数が無いときだけ、楽天で数えた既刊を出す
+  const knownLatest = !total && latestVolume?.found && latestVolume.latestVolume ? latestVolume.latestVolume : null
+  const metaParts = [
+    mediaType === 'anime' ? 'アニメ' : '漫画',
+    total ? `全${total}${unit}` : knownLatest ? `連載中（既刊${knownLatest}${unit}）` : '連載中',
+  ]
   if (scoreLabel) metaParts.push(`★${scoreLabel}`)
 
   // 漫画の既刊巻数は total（=AniListのvolumes）として metaParts に出るため、ここでは扱わない。
@@ -276,6 +299,15 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
               {metaParts.join('・')}
               {supplementalInfo ? ` ・ ${supplementalInfo}` : ''}
             </div>
+            {knownLatest && (
+              // 楽天ウェブサービスのクレジット表示（必須）。既刊の巻数は楽天ブックスで数えているため
+              <div style={{ fontSize: 10, marginTop: -6, marginBottom: 10 }}>
+                {/* eslint-disable-next-line react/jsx-no-target-blank -- 楽天のガイドの HTML をそのまま使う */}
+                <a href="https://developers.rakuten.com/" target="_blank">
+                  Supported by Rakuten Developers
+                </a>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 12 }}>
               {(item.genres || []).map((g) => (
                 <span key={g} className="tag tag-outline" style={{ fontSize: 11 }}>
@@ -348,6 +380,7 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
               <ProgressRow
                 progress={currentRecord.progress}
                 total={total}
+                knownLatest={knownLatest}
                 progressCap={progressCap}
                 pending={pending}
                 editingProgress={editingProgress}
@@ -479,6 +512,7 @@ function StarRating({ value, disabled, onChange }: { value: number | null; disab
 function ProgressRow({
   progress,
   total,
+  knownLatest,
   progressCap,
   pending,
   editingProgress,
@@ -490,6 +524,8 @@ function ProgressRow({
 }: {
   progress: number
   total: number | null
+  // knownLatest は AniList に巻数が無いとき、楽天で数えた既刊。全巻ではないので total とは分けて「既刊」と出す
+  knownLatest: number | null
   progressCap: number | null
   pending: boolean
   editingProgress: boolean
@@ -535,7 +571,7 @@ function ProgressRow({
             onClick={() => !pending && onEdit()}
             onKeyDown={pending ? undefined : activateOnKey(onEdit)}
           >
-            {total ? `${progress} / ${total}${unit}` : `${progress}${unit} / ？${unit}`}
+            {total ? `${progress} / ${total}${unit}` : knownLatest ? `${progress} / 既刊${knownLatest}${unit}` : `${progress}${unit} / ？${unit}`}
           </span>
         )}
         <button
