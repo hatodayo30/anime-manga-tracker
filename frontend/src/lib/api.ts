@@ -3,6 +3,7 @@ import type {
   LibraryRecord,
   Me,
   MangaRankingItem,
+  NewReleasesResult,
   NewSeriesItem,
   NaturalSearchResult,
   NewRecordInput,
@@ -72,6 +73,7 @@ export const api = {
   trending: () => request<AniListItem[]>('/home/trending'),
   trendingManga: () => request<MangaRankingItem[]>('/home/trending-manga'),
   newSeries: () => request<NewSeriesItem[]>('/home/new-series'),
+  newReleases: () => request<NewReleasesResult>('/new-releases/comics'),
 
   getMe: () => request<Me>('/auth/me'),
   login: (body: { email: string; password: string }) =>

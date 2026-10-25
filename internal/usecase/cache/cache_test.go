@@ -507,3 +507,36 @@ func TestTTLCache_RefreshKeepsValueOnFailure(t *testing.T) {
 		t.Errorf("got (%q, %v), want the previous value to survive a failed refresh", v, err)
 	}
 }
+
+// Peek は取得を走らせず、取得済みの値だけを返すことを保証する。値が無い・取得中のときに待たせると、
+// 取得に 1 分かかる用途で利用者のリクエストがタイムアウトする。
+func TestTTLCache_Peek(t *testing.T) {
+	c := cache.New[string](time.Minute)
+
+	if _, ok := c.Peek("k"); ok {
+		t.Fatal("expected no value before any fetch")
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c.Get(context.Background(), "k", func(context.Context) (string, error) {
+			close(started)
+			<-release
+			return "v", nil
+		})
+	}()
+	<-started
+	// 取得中は値が無い扱い（待たない）
+	if _, ok := c.Peek("k"); ok {
+		t.Fatal("expected no value while fetching")
+	}
+	close(release)
+	<-done
+
+	if v, ok := c.Peek("k"); !ok || v != "v" {
+		t.Errorf("Peek = %q, %v; want %q, true", v, ok, "v")
+	}
+}

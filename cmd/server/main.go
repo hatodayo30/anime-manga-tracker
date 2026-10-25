@@ -125,8 +125,13 @@ func run() error {
 	var rakutenGateway newreleases.Gateway
 	switch {
 	case cfg.RakutenApplicationID != "" && cfg.RakutenAccessKey != "":
-		rakutenGateway = rakuten.NewClient(cfg.RakutenApplicationID, cfg.RakutenAccessKey)
-		log.Printf("rakuten: enabled")
+		rakutenGateway = rakuten.NewClient(cfg.RakutenApplicationID, cfg.RakutenAccessKey, cfg.RakutenReferer,
+			rakuten.WithAffiliateID(cfg.RakutenAffiliateID))
+		if cfg.RakutenAffiliateID == "" {
+			log.Printf("rakuten: enabled (RAKUTEN_AFFILIATE_ID is not set: product links are not affiliate links)")
+		} else {
+			log.Printf("rakuten: enabled")
+		}
 	case cfg.RakutenApplicationID != "" || cfg.RakutenAccessKey != "":
 		// 片方だけ入っているのは入れ忘れなので、黙って無効にせずログで分かるようにする
 		log.Printf("rakuten: disabled (set both RAKUTEN_APPLICATION_ID and RAKUTEN_ACCESS_KEY)")
