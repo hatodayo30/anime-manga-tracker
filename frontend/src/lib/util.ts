@@ -122,6 +122,10 @@ export function formatScore(score: number | null | undefined): string | null {
   return (score / 10).toFixed(1)
 }
 
+// MAX_PROGRESS は進捗として入力できる上限。サーバーの domain.MaxProgress と同じ値にする。
+// 総数が分からない連載中の作品でも、ありえない数（100000000 巻）を入れられないようにする
+export const MAX_PROGRESS = 9999
+
 // 進捗の追跡単位。アニメは話数、漫画は巻数で記録する。
 export function unitFor(kind: MediaKind): string {
   return kind === 'anime' ? '話' : '巻'
