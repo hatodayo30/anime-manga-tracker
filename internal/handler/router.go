@@ -26,6 +26,9 @@ type Handlers struct {
 
 	// NLSearch は自然文検索（BACKLOG 9-b）。
 	NLSearch *NLSearchHandler
+
+	// NewReleases は「新着」タブの新刊（BACKLOG 11-b）。
+	NewReleases *NewReleasesHandler
 }
 
 // レート制限の値。キーはクライアント IP（NewRouter の IPExtractor を参照）。
@@ -150,6 +153,9 @@ func NewRouter(h Handlers) *echo.Echo {
 	// 利用者が特定できるので IP 単位の制限は掛けない。AI を呼ぶのは 1 人 1 日 1 回（種別ごと）で、
 	// それ以外はキャッシュから返す（usecase/recommend）
 	e.GET("/api/recommendations/ai", h.Recommend.AI, h.RequireUser)
+	// 新刊は「新着」タブ（ログインしてから使う画面）向けなのでログイン必須にする。楽天を叩くのは
+	// キャッシュの取り直しだけで、利用者のリクエストは上流に届かないので IP 単位の制限は掛けない
+	e.GET("/api/new-releases/comics", h.NewReleases.Comics, h.RequireUser)
 
 	// login は全体の制限に加えて専用の厳しい制限を重ねる（全体の 1 本としても数える）。
 	// signup にも同じ loginLimit を重ねる。理由は 2 つ:

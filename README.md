@@ -92,6 +92,8 @@ Vite のプロキシ先ポートは `BACKEND_PORT` → `PORT` → `8080` の順�
 | `COOKIE_SECURE` | | `false` | セッション Cookie に `Secure` を立てるか。HTTPS でアクセスする環境では `true` |
 | `ANTHROPIC_API_KEY` | | — | AI 翻訳（Claude）の API キー。未設定ならあらすじの翻訳は MyMemory だけで動く |
 | `CLAUDE_DAILY_TOKEN_LIMIT` | | `2000000` | Claude に 1 日（JST）で使ってよいトークン数。超えたら MyMemory に落とす |
+| `RAKUTEN_APPLICATION_ID` | | — | 楽天ブックス書籍検索 API のアプリ ID（新刊）。`RAKUTEN_ACCESS_KEY` と両方揃っていなければ新刊の API は「未設定」を返す |
+| `RAKUTEN_ACCESS_KEY` | | — | 楽天ブックス書籍検索 API のアクセスキー |
 
 ローカルでは `.env` が読み込まれます（無くてもエラーにはなりません）。本番では実際の環境変数を使う想定です。
 
@@ -146,6 +148,7 @@ psql "$DATABASE_URL" -c "DELETE FROM applied_migrations WHERE version = 4"
 | `GET` | `/api/home/trending` | 人気アニメ |
 | `GET` | `/api/home/trending-manga` | 人気漫画（Jikan でランキング・掲載誌を補完） |
 | `POST` | `/api/translate` | テキストの機械翻訳 |
+| `GET` | `/api/new-releases/comics` | 直近 1 週間に発売されたコミック（楽天ブックス、ログイン必須。キーが無ければ `configured: false`） |
 | `GET` | `/healthz` | ヘルスチェック（DB 疎通のみ確認。`{"status":"ok"}` / 失敗時 503） |
 
 `/api/*` と `/healthz` 以外のパスは `frontend/dist` の静的ファイルにフォールバックします（SPA ルーティング）。

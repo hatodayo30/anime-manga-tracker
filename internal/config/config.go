@@ -40,6 +40,12 @@ type Config struct {
 	// 既定の 200 万は、Haiku 5.5 で全部が出力トークン（$0.50/MTok）だったとしても 1 日 $1。
 	// 翻訳 1 回は数千トークンなので、正当な利用で数百作品ぶんに相当し、普段は届かない。
 	ClaudeDailyTokenLimit int64
+
+	// RakutenApplicationID / RakutenAccessKey は楽天ブックス書籍検索 API の認証情報（新刊、BACKLOG 11-b）。
+	// どちらも任意で、両方揃っていなければ新刊の API は「未設定」を返す（起動は止めない）。
+	// アクセスキーは本物の秘密なので、本番では ANTHROPIC_API_KEY と同じく SSM から secrets で渡す。
+	RakutenApplicationID string
+	RakutenAccessKey     string
 }
 
 // Load は .env（存在すれば）と環境変数から設定を読み込む。
@@ -70,6 +76,9 @@ func Load() (*Config, error) {
 
 		AnthropicAPIKey:       os.Getenv("ANTHROPIC_API_KEY"),
 		ClaudeDailyTokenLimit: claudeDailyTokenLimit,
+
+		RakutenApplicationID: os.Getenv("RAKUTEN_APPLICATION_ID"),
+		RakutenAccessKey:     os.Getenv("RAKUTEN_ACCESS_KEY"),
 	}
 
 	if cfg.DatabaseURL == "" {
