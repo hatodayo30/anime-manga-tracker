@@ -34,6 +34,8 @@ export interface SearchPageProps {
   searchByTitle: (query: string, kind: MediaKind, signal: AbortSignal) => Promise<WorkSummary[]>
   /** 内容で探す（今の API）。従来検索に落ちたときは fallback に理由を入れて返す */
   searchByContent: (text: string, kind: MediaKind, signal: AbortSignal) => Promise<ContentSearchResult>
+  /** 最初に入れておく作品名（「新着」の新刊から「作品を探して記録する」で来たとき）。入っていればすぐ検索する */
+  initialTitleQuery?: string
   /** ポスターを押したとき（作品モーダルを開く） */
   onOpenWork: (work: WorkSummary) => void
   /**
@@ -57,12 +59,12 @@ function staggerStyle(index: number): CSSProperties {
   return { ['--srch-i' as string]: Math.min(index, STAGGER_CAP) } as CSSProperties
 }
 
-export function SearchPage({ kind, onKindChange, isLoggedIn, onLoginClick, searchByTitle, searchByContent, onOpenWork, statusLabelFor }: SearchPageProps) {
+export function SearchPage({ kind, onKindChange, isLoggedIn, onLoginClick, searchByTitle, searchByContent, initialTitleQuery, onOpenWork, statusLabelFor }: SearchPageProps) {
   const [mode, setMode] = useState<Mode>('title')
   const [showLogin, setShowLogin] = useState(false)
 
   // ----- 作品名 -----
-  const [titleQuery, setTitleQuery] = useState('')
+  const [titleQuery, setTitleQuery] = useState(initialTitleQuery ?? '')
   // query は検索した言葉。見出しに打っている途中の文字ではなく、結果の元になった言葉を出すため
   const [titleResult, setTitleResult] = useState<{ query: string; works: WorkSummary[] } | null>(null)
   const [titleError, setTitleError] = useState(false)

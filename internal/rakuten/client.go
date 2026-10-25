@@ -21,8 +21,19 @@ import (
 
 const defaultEndpoint = "https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404"
 
-// sizeComic は判型「コミック」。漫画の単行本だけに絞る。
-const sizeComic = "9"
+// 漫画（コミック）のジャンルの下のジャンル。2026-10-25 に Books Genre Search API（booksGenreId=001001）で確かめた。
+//
+// ジャンルごとに分けて引くのは、「発売日の新しい順」の先頭に予約が数千件並び、page の上限（100）までに
+// 直近の発売日に届かなくなりかけたため（BACKLOG 11-b）。ジャンルで絞れば 1 本あたりの予約が減る。
+// 判型（size=9 がコミック）で絞るのはやめた。「文庫」のジャンルの漫画は判型が文庫なので落ちる。
+const (
+	GenreShonen  = "001001001" // 少年
+	GenreShojo   = "001001002" // 少女
+	GenreSeinen  = "001001003" // 青年
+	GenreLadies  = "001001004" // レディース
+	GenreBunko   = "001001006" // 文庫
+	GenreOtherCm = "001001012" // その他
+)
 
 // HitsPerPage は 1 ページの件数。API の上限（30）にして、ページ数（＝リクエスト数）を減らす。
 const HitsPerPage = 30
@@ -47,9 +58,11 @@ type Book struct {
 	ISBN          string `json:"isbn"`
 	// SalesDate は「2026年10月24日」「2026年11月上旬」「2026年12月頃」のような表記のまま返す。
 	// 曖昧な表記をどう扱うかは usecase の判断なので、ここでは解釈しない。
-	SalesDate     string `json:"salesDate"`
-	ItemPrice     int    `json:"itemPrice"`
-	ItemURL       string `json:"itemUrl"`
+	SalesDate string `json:"salesDate"`
+	ItemPrice int    `json:"itemPrice"`
+	ItemURL   string `json:"itemUrl"`
+	// AffiliateURL は affiliateId を渡したときだけ入る、楽天アフィリエイト経由の商品ページの URL。
+	AffiliateURL  string `json:"affiliateUrl"`
 	LargeImageURL string `json:"largeImageUrl"`
 }
 
@@ -98,6 +111,7 @@ type Client struct {
 	accessKey     string
 	referer       string
 	origin        string
+	affiliateID   string
 
 	mu       sync.Mutex
 	lastCall time.Time
@@ -110,6 +124,14 @@ type Option func(*Client)
 // WithEndpoint は呼び出し先の URL を差し替える。
 func WithEndpoint(endpoint string) Option {
 	return func(c *Client) { c.endpoint = endpoint }
+}
+
+// WithAffiliateID は楽天アフィリエイト ID を付ける。付けると応答の各商品に AffiliateURL が入る。
+//
+// 規約（第 3 条）は、楽天アフィリエイトの対象の商品ページへリンクするときはアフィリエイト経由で作るよう定めている
+// （英訳で確認。BACKLOG 11-b）。本番で使うときは付けること。
+func WithAffiliateID(id string) Option {
+	return func(c *Client) { c.affiliateID = id }
 }
 
 // WithRequestInterval はリクエストの最小間隔を差し替える（テストで 1 秒待たないため）。
@@ -170,12 +192,12 @@ func (c *Client) throttle(ctx context.Context) error {
 	}
 }
 
-// LatestComics はコミックを発売日の新しい順（-releaseDate）に並べた結果の page ページ目を返す。
-// 先頭には未発売の予約が来るので、日付の範囲は呼び出し側で絞る。
+// LatestComics はジャンル genreID（Genre* の定数）の本を発売日の新しい順（-releaseDate）に並べた結果の
+// page ページ目を返す。先頭には未発売の予約が来るので、日付の範囲は呼び出し側で絞る。
 //
 // 該当なし（404 not_found）はエラーにせず空のページとして返す。総ページ数より後ろを読んだときにも
 // 起こりうるため。
-func (c *Client) LatestComics(ctx context.Context, page int) (*Page, error) {
+func (c *Client) LatestComics(ctx context.Context, genreID string, page int) (*Page, error) {
 	if page < 1 || page > MaxPage {
 		return nil, fmt.Errorf("rakuten: page must be between 1 and %d (got %d)", MaxPage, page)
 	}
@@ -187,7 +209,7 @@ func (c *Client) LatestComics(ctx context.Context, page int) (*Page, error) {
 		"applicationId": {c.applicationID},
 		"format":        {"json"},
 		"formatVersion": {"2"},
-		"size":          {sizeComic},
+		"booksGenreId":  {genreID},
 		"sort":          {"-releaseDate"},
 		"hits":          {strconv.Itoa(HitsPerPage)},
 		"page":          {strconv.Itoa(page)},
@@ -195,6 +217,9 @@ func (c *Client) LatestComics(ctx context.Context, page int) (*Page, error) {
 		"outOfStockFlag": {"1"},
 		// elements で項目を絞ると応答は軽くなるが、pageCount のような最上位の項目まで落ちるのかが
 		// 文書から読み取れない。総ページ数は二分探索に要るので、絞らずに受け取る
+	}
+	if c.affiliateID != "" {
+		q.Set("affiliateId", c.affiliateID)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+"?"+q.Encode(), nil)
 	if err != nil {

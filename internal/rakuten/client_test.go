@@ -27,14 +27,14 @@ func TestLatestComics_SendsQueryAndHeader(t *testing.T) {
 		_, _ = w.Write([]byte(`{"pageCount": 1, "items": []}`))
 	})
 
-	if _, err := c.LatestComics(context.Background(), 3); err != nil {
+	if _, err := c.LatestComics(context.Background(), rakuten.GenreShonen, 3); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	q := got.URL.Query()
 	want := map[string]string{
 		"applicationId":  "app-id",
-		"size":           "9",
+		"booksGenreId":   rakuten.GenreShonen,
 		"sort":           "-releaseDate",
 		"hits":           "30",
 		"page":           "3",
@@ -74,7 +74,7 @@ func TestLatestComics_DecodesItems(t *testing.T) {
 				]}`))
 			})
 
-			pg, err := c.LatestComics(context.Background(), 1)
+			pg, err := c.LatestComics(context.Background(), rakuten.GenreShonen, 1)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -101,7 +101,7 @@ func TestLatestComics_NotFoundIsEmpty(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error": "not_found", "error_description": "not found"}`))
 	})
 
-	pg, err := c.LatestComics(context.Background(), 1)
+	pg, err := c.LatestComics(context.Background(), rakuten.GenreShonen, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestLatestComics_ErrorStatus(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error": "too_many_requests", "error_description": "number of allowed requests has been exceeded"}`))
 	})
 
-	_, err := c.LatestComics(context.Background(), 1)
+	_, err := c.LatestComics(context.Background(), rakuten.GenreShonen, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -137,7 +137,7 @@ func TestLatestComics_TransportErrorOmitsURL(t *testing.T) {
 	srv.Close() // 閉じたサーバーに向けて接続を失敗させる
 
 	c := rakuten.NewClient("app-id", "secret-key", "https://mirokuapp.com/", rakuten.WithEndpoint(endpoint), rakuten.WithRequestInterval(0))
-	_, err := c.LatestComics(context.Background(), 1)
+	_, err := c.LatestComics(context.Background(), rakuten.GenreShonen, 1)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -152,7 +152,7 @@ func TestLatestComics_RejectsOutOfRangePage(t *testing.T) {
 	c := newServer(t, func(w http.ResponseWriter, r *http.Request) { calls++ })
 
 	for _, page := range []int{0, rakuten.MaxPage + 1} {
-		if _, err := c.LatestComics(context.Background(), page); err == nil {
+		if _, err := c.LatestComics(context.Background(), rakuten.GenreShonen, page); err == nil {
 			t.Errorf("page %d: expected error", page)
 		}
 	}
@@ -169,7 +169,7 @@ func TestLatestComics_ErrorStatusNewShape(t *testing.T) {
 		_, _ = w.Write([]byte(`{"errors":{"errorCode":403,"errorMessage":"REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING"}}`))
 	})
 
-	_, err := c.LatestComics(context.Background(), 1)
+	_, err := c.LatestComics(context.Background(), rakuten.GenreShonen, 1)
 	if err == nil || !strings.Contains(err.Error(), "REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING") {
 		t.Fatalf("expected error with the rakuten reason, got %v", err)
 	}
@@ -183,7 +183,7 @@ func TestLatestComics_ErrorStatusUnknownShape(t *testing.T) {
 		_, _ = w.Write([]byte(`Too many requests`))
 	})
 
-	_, err := c.LatestComics(context.Background(), 1)
+	_, err := c.LatestComics(context.Background(), rakuten.GenreShonen, 1)
 	if err == nil || !strings.Contains(err.Error(), "Too many requests") {
 		t.Fatalf("expected error with the raw body, got %v", err)
 	}

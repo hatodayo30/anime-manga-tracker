@@ -58,8 +58,11 @@ export interface NewReleaseItem {
   // 楽天の表記が「〜日頃」だった（日付は未確定）
   salesDateApproximate: boolean
   price: number
+  // 商品ページ。楽天アフィリエイト ID が設定されていればアフィリエイト経由の URL
   url: string
   imageUrl: string
+  // 楽天のジャンル名（少年・少女・青年・レディース・文庫・その他）
+  genre: string
 }
 
 // configured が false のときは楽天のキーが無い環境で、from 以下は無く items は空
@@ -70,6 +73,8 @@ export interface NewReleasesResult {
   fetchedAt?: string
   // 期間内を読み切れなかった（一部だけ）
   truncated: boolean
+  // サーバーがまだ一覧を取り終えていない（起動直後など。全ジャンルの取得に 1 分ほどかかる）
+  loading?: boolean
   items: NewReleaseItem[]
 }
 
