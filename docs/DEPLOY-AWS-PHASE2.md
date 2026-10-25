@@ -541,12 +541,16 @@ curl --max-time 5 http://${PUBLIC_IP}:8080/healthz
 **ここを飛ばさないこと。** `TRUST_PROXY` を取りこぼしていると、全利用者が ALB の IP で
 1 つのバケットを共有する。自分 1 人で触っている間は気付けず、人が増えてから 429 で露見する。
 
+> **2026-10-25 から `/api/home/*` を含む外部 API の `/api/*` はログイン必須（BACKLOG 4-a の 4）。**
+> 未ログインの `curl` には `401` が返る。IP 単位の制限はログインの確認より先に効くので、この検証は
+> `200` を `401` と読み替えればそのまま使える。**`401` は「制限に掛かっていない」の意味**で、設定ミスではない。
+
 ```bash
-# 未認証 API を 40 回連続で叩く（バースト 30 / 毎秒 2 本なので途中で 429 に入る）
+# API を 40 回連続で叩く（バースト 30 / 毎秒 2 本なので途中で 429 に入る）
 for i in $(seq 1 40); do
   curl -s -o /dev/null -w '%{http_code} ' "https://${DOMAIN}/api/home/trending"
 done; echo
-# 200 が 30 強、そのあと 429 が混じる ← バケットが効いている
+# 401 が 30 強、そのあと 429 が混じる ← バケットが効いている
 ```
 
 **判定はここから。2 つとも確認する。**
@@ -560,7 +564,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "https://${DOMAIN}/api/home/trending"
 
 | 結果 | 意味 |
 | --- | --- |
-| `200` | **正しい。** IP ごとに別バケットになっている |
+| `401` | **正しい。** IP ごとに別バケットになっている（2026-10-25 より前の版では `200`） |
 | `429` | **設定ミス。** 全員が同じバケットを共有している |
 
 **(2) XFF を偽装してもバケットが変わらないか。** `internal/handler/router.go` の
@@ -575,7 +579,7 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 | 結果 | 意味 |
 | --- | --- |
 | `429` | **正しい。** 偽装した値では別バケットにならない |
-| `200` | **危険。** ALB の XFF 処理が既定の append になっていない。ヘッダを書き換えるだけでレート制限を回避できる状態 |
+| `401` | **危険。** ALB の XFF 処理が既定の append になっていない。ヘッダを書き換えるだけでレート制限を回避できる状態（2026-10-25 より前の版では `200`） |
 
 > `echo.ExtractIPFromXFFHeader()` は XFF を**右から左へ**辿り、最初に「信頼しない」IP を返す。
 > ALB の `10.0.x.x` は既定の信頼範囲（RFC1918）なので飛ばされ、次に当たるのが ALB が追記した
@@ -776,6 +780,145 @@ Phase 1 の `create-service` との差分は `--load-balancers` と
 `--health-check-grace-period-seconds` の 2 つだけ。
 
 ---
+
+## 2026-10-25 の機能を本番に出す
+
+Phase 2 の公開構成のあとに入った機能（AI 翻訳・自然文検索・AI おすすめ・「新着」タブの新刊と新連載・既刊の巻数）と、
+API のログイン必須化（BACKLOG 4-a の 4）をまとめて出す手順。**タスク定義の更新を 1 回にまとめる**ので、
+落ちるのも 1 回（30〜60 秒）で済む。
+
+**変わらないもの:** インフラ（VPC・SG・ALB・RDS）、IAM、ヘルスチェック（`/healthz` は今もログイン不要）。
+外向きの通信は、AniList と同じくタスクのパブリック IP から Anthropic（`api.anthropic.com`）と楽天
+（`openapi.rakuten.co.jp`）へ出る。NAT もエンドポイントも足さない。
+
+### 0. AWS の外でやること（先に済ませる）
+
+1. **Anthropic Console で月の利用上限（Spend limit）を設定する。** アプリの日次上限（200 万トークン）は
+   プロセス内のメモリにあり、デプロイのたびに 0 に戻る（[Phase 1 の手順書](DEPLOY-AWS.md)の「AI（Claude）の API キーを入れる」）
+2. **楽天ウェブサービスのアプリの「許可されたウェブサイト」に `${DOMAIN}` を入れる。** アプリの種類は
+   「ウェブアプリケーション」（[楽天ブックスのキーを入れる](DEPLOY-AWS.md#楽天ブックスのキーを入れる一度だけ)）
+3. **楽天アフィリエイト ID を取る。** 規約（第 3 条）が商品ページへのリンクをアフィリエイト経由で作るよう定めているため
+   （BACKLOG 11-b「規約で確かめたこと」）。取れていなければ 4 の `RAKUTEN_AFFILIATE_ID` を空にして進めてもアプリは動くが、
+   公開する前に入れること
+
+### 1. キーを SSM に入れる
+
+```bash
+# 履歴にキーを残さないよう、ファイル経由で入れる。どれも SecureString
+aws ssm put-parameter --name /amt/prod/ANTHROPIC_API_KEY --type SecureString \
+  --value "$(cat /tmp/anthropic-key.txt)"
+aws ssm put-parameter --name /amt/prod/RAKUTEN_APPLICATION_ID --type SecureString \
+  --value "$(cat /tmp/rakuten-app-id.txt)"
+aws ssm put-parameter --name /amt/prod/RAKUTEN_ACCESS_KEY --type SecureString \
+  --value "$(cat /tmp/rakuten-access-key.txt)"
+rm /tmp/anthropic-key.txt /tmp/rakuten-app-id.txt /tmp/rakuten-access-key.txt
+```
+
+すでに入れたものは飛ばしてよい（入れ直すなら `--overwrite`）。IAM の変更は要らない
+（Phase 1 の Step 6-1 のインラインポリシーが `parameter/amt/prod/*` を許可している）。
+
+### 2. イメージを作って push する
+
+```bash
+git checkout main && git pull
+export TAG=$(git rev-parse --short HEAD)
+aws ecr get-login-password --region ${AWS_REGION} \
+  | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+docker build --platform linux/amd64 -t ${ECR_REPO}:${TAG} .
+docker push ${ECR_REPO}:${TAG}
+```
+
+### 3. タスク定義を 1 回で書き換えて反映する
+
+イメージ・`secrets` 3 つ・`environment` 2 つをまとめて差し替える。`jq` で同名を除いてから足すので、何度流しても重複しない。
+
+```bash
+export RAKUTEN_AFFILIATE_ID=   # 3 で取った楽天アフィリエイト ID（まだなら空のまま）
+
+aws ecs describe-task-definition --task-definition anime-manga-tracker \
+  --query 'taskDefinition' --output json \
+  | jq --arg img "${ECR_REPO}:${TAG}" \
+       --arg prefix "arn:aws:ssm:${AWS_REGION}:${ACCOUNT_ID}:parameter/amt/prod/" \
+       --arg referer "https://${DOMAIN}/" \
+       --arg affiliate "${RAKUTEN_AFFILIATE_ID}" '
+      del(.taskDefinitionArn,.revision,.status,.requiresAttributes,
+          .compatibilities,.registeredAt,.registeredBy,.deregisteredAt)
+      | .containerDefinitions[0].image = $img
+      | .containerDefinitions[0].secrets |=
+          ( map(select(.name as $n | ["ANTHROPIC_API_KEY","RAKUTEN_APPLICATION_ID","RAKUTEN_ACCESS_KEY"] | index($n) | not))
+            + [ {name:"ANTHROPIC_API_KEY",      valueFrom:($prefix + "ANTHROPIC_API_KEY")},
+                {name:"RAKUTEN_APPLICATION_ID", valueFrom:($prefix + "RAKUTEN_APPLICATION_ID")},
+                {name:"RAKUTEN_ACCESS_KEY",     valueFrom:($prefix + "RAKUTEN_ACCESS_KEY")} ] )
+      | .containerDefinitions[0].environment |=
+          ( map(select(.name != "RAKUTEN_REFERER" and .name != "RAKUTEN_AFFILIATE_ID"))
+            + [ {name:"RAKUTEN_REFERER", value:$referer} ]
+            + (if $affiliate == "" then [] else [ {name:"RAKUTEN_AFFILIATE_ID", value:$affiliate} ] end) )
+    ' > /tmp/amt-taskdef.json
+
+# 登録する前に目で確かめる。COOKIE_SECURE / TRUST_PROXY（Step 10）が残っていること
+jq '.containerDefinitions[0] | {image, environment, secrets}' /tmp/amt-taskdef.json
+aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
+
+aws ecs update-service --cluster amt-cluster --service amt-service \
+  --task-definition anime-manga-tracker
+aws ecs wait services-stable --cluster amt-cluster --services amt-service
+
+# 動いているイメージのタグが ${TAG} と一致することを確認する（必須。Phase 1 の手順書の「最後の確認を省かない」）
+aws ecs describe-task-definition --task-definition \
+  $(aws ecs describe-services --cluster amt-cluster --services amt-service \
+      --query 'services[0].taskDefinition' --output text) \
+  --query 'taskDefinition.containerDefinitions[0].image' --output text
+```
+
+- `RAKUTEN_REFERER` は `${DOMAIN}` から作る。楽天の「許可されたウェブサイト」と同じドメインにすること（違うと楽天が 403 を返す）
+- 日次上限を変えたいときは、同じ要領で `environment` に `CLAUDE_DAILY_TOKEN_LIMIT` を足す
+
+### 4. 確かめる
+
+```bash
+# 起動ログ。new-releases-warm は 1 分半ほどかかるので、起動から 2 分待ってから見る
+aws logs tail /ecs/anime-manga-tracker --since 5m \
+  | grep -E 'migrate|ai: |rakuten|new-releases-warm|home-cache-warm'
+# migrate: applied 0005_translations.up.sql ← 2026-10-22 より前のイメージからなら、このとき自動で適用される
+#                                        （すでに適用済みなら "already up to date (5 migrations)"）
+# ai: enabled (daily limit 2000000 tokens)
+# rakuten: enabled                      ← アフィリエイト ID が無いと "(RAKUTEN_AFFILIATE_ID is not set: ...)" が付く
+# scheduler: home-cache-warm done in ...
+# scheduler: new-releases-warm done in 1m...
+
+# API は未ログインなら 401（BACKLOG 4-a の 4）。ヘルスチェックは今も 200
+curl -s -o /dev/null -w 'healthz %{http_code}\n'  "https://${DOMAIN}/healthz"
+curl -s -o /dev/null -w 'trending %{http_code}\n' "https://${DOMAIN}/api/home/trending"
+# healthz 200
+# trending 401
+```
+
+ブラウザで（ログインしてから）:
+
+1. 作品モーダルのあらすじが日本語になる（AI 翻訳）
+2. 検索の「内容で探す」で「異世界で料理する漫画」が引ける。「薫子っていうキャラが出るアニメ」のようにキャラクター名でも引ける
+3. ホームに「AI のおすすめ」の棚が出る（記録が 3 件以上あるとき。初回は数秒〜十数秒かかる）
+4. 「新着」→「新刊」に今週のコミックが出る。日付とジャンルで絞れ、表紙を押すとダイアログが出る。下に
+   「Supported by Rakuten Developers」が出る（楽天の規約で必須）
+5. 「新着」→「新連載」に最近始まった連載が出る
+6. 連載中の漫画のモーダルで「連載中（既刊 N 巻）」か「単行本は見つかりませんでした」が出る
+
+うまくいかないとき:
+
+| 症状 | 原因 |
+| --- | --- |
+| `ai: disabled` | `ANTHROPIC_API_KEY` が `secrets` に入っていない |
+| `rakuten: disabled (set both ...)` | 楽天のキーが片方しか入っていない |
+| `new-releases-warm failed ... 403 ... REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING` | `RAKUTEN_REFERER` のドメインが楽天の「許可されたウェブサイト」に無い |
+| `new-releases-warm failed ... 429` | 楽天のレート制限。しばらく待つと、次の取り直し（3 時間ごと）か新刊の画面を開いたときに取り直す |
+| 新刊が「取得しています」のまま | 起動直後で `new-releases-warm` が終わっていない（1 分半ほど）。終わっても続くならログで `failed` を探す |
+| AI の機能だけ従来の動き（キーワード検索・ジャンルのおすすめ）になる | 日次上限に達したか、Anthropic 側の失敗。ログで `nlsearch: ai failed` / `recommend: ai recommendations failed` を探し、理由に `daily token budget exceeded` があれば日次上限 |
+
+**戻すとき:** 1 つ前のリビジョンを指定して `update-service` する（`--task-definition anime-manga-tracker:<前の番号>`）。
+マイグレーション 0005（`translations`）は足すだけなので、古いイメージに戻しても動く。
+
+**確かめていないこと:** メモリ（512MB）に収まるか。AI の条件・おすすめ・既刊・新刊のキャッシュはどれも件数に上限があり、
+ローカルでは問題になっていないが、本番では測っていない。しばらくは CloudWatch の `MemoryUtilization` を見る。
 
 ## この後
 
