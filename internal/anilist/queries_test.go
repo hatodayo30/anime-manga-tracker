@@ -1,6 +1,7 @@
 package anilist
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
@@ -87,5 +88,52 @@ func TestFilterVariables_MinimumTagRankOnlyWithTags(t *testing.T) {
 	excludeOnly := filterVariables(Filter{MediaType: domain.MediaTypeManga, ExcludedTags: []string{"Gore"}})
 	if _, ok := excludeOnly["minimumTagRank"]; ok {
 		t.Error("expected minimumTagRank to be omitted without tags")
+	}
+}
+
+// キャラクターから引いた作品の絞り込みが、filterQuery（AniList 側の絞り込み）と同じ意味になることを保証する。
+// ずれると、同じ文でもキャラクター名の有無で結果の基準が変わる。
+func TestMatchesFilter(t *testing.T) {
+	genres := []string{"Romance", "Drama"}
+	tags := map[string]int{"School": 90, "Cooking": 30}
+
+	tests := []struct {
+		name string
+		f    Filter
+		want bool
+	}{
+		{name: "条件なしなら通す", f: Filter{}, want: true},
+		{name: "ジャンルはすべてを含めば通す", f: Filter{Genres: []string{"Romance", "Drama"}}, want: true},
+		{name: "含まないジャンルが 1 つでもあれば落とす", f: Filter{Genres: []string{"Romance", "Action"}}, want: false},
+		{name: "タグは下限以上なら通す", f: Filter{Tags: []string{"School"}}, want: true},
+		{name: "タグが付いていても下限未満なら落とす", f: Filter{Tags: []string{"Cooking"}}, want: false},
+		{name: "除外ジャンルを含めば落とす", f: Filter{ExcludedGenres: []string{"Drama"}}, want: false},
+		{name: "除外タグは下限未満でも付いていれば落とす", f: Filter{ExcludedTags: []string{"Cooking"}}, want: false},
+		{name: "付いていないタグの除外は通す", f: Filter{ExcludedTags: []string{"Gore"}}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matchesFilter(genres, tags, tt.f); got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// 名前の候補と作品名の検索を、エイリアスで 1 本のクエリにまとめることを保証する。
+// 候補ごとに送ると AniList の枠（24 本/分）を候補の数だけ使う。
+func TestBuildCharacterQuery(t *testing.T) {
+	q := buildCharacterQuery(3, true)
+	for _, want := range []string{"c0: Page", "c1: Page", "c2: Page", "t: Page", "$n2: String", "$query: String", "search: $n1"} {
+		if !strings.Contains(q, want) {
+			t.Errorf("expected query to contain %q", want)
+		}
+	}
+
+	q = buildCharacterQuery(1, false)
+	for _, unwanted := range []string{"c1: Page", "t: Page", "$query"} {
+		if strings.Contains(q, unwanted) {
+			t.Errorf("expected query not to contain %q", unwanted)
+		}
 	}
 }

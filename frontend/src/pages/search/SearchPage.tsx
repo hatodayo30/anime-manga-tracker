@@ -512,7 +512,7 @@ function ResultGrid({
 
 /** 条件を「漫画の、ファンタジーから、異世界と料理のタグがある作品」と文で読ませる */
 function ConditionSentence({ conditions }: { conditions: AiConditions }) {
-  const { kind, kindFromText, genres, tags, excludedGenres, excludedTags, query } = conditions
+  const { kind, kindFromText, genres, tags, excludedGenres, excludedTags, query, character } = conditions
   const excluded = [...excludedGenres, ...excludedTags]
   return (
     <>
@@ -538,6 +538,12 @@ function ConditionSentence({ conditions }: { conditions: AiConditions }) {
               </span>
             ))}
             のタグがある
+          </>
+        )}
+        {character && (
+          <>
+            {tags.length > 0 && '、'}
+            <span className="srch-tok srch-tok-character">{character}</span>が出る
           </>
         )}
         作品
