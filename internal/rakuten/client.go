@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,9 +31,12 @@ const HitsPerPage = 30
 const MaxPage = 100
 
 // minRequestInterval はリクエストの最小間隔。楽天は上限を公開しておらず、超えると 429 になる。
-// 楽天ウェブサービスで以前から目安とされている「1 アプリ ID あたり 1 秒に 1 本」に合わせる。
-// 呼び出すのは新刊のキャッシュの取り直しだけで、1 回あたり十数本なので、待ち時間は裏で吸収できる。
-const minRequestInterval = time.Second
+//
+// 2026-10-25 に実際のキーで確かめたこと: ちょうど 1 秒間隔で送ると 10 本目あたりで 429 になった。
+// 1.1 秒の sleep を挟んだ（応答時間を含めて 1.3〜1.5 秒間隔の）15 本は全部通った。楽天側は秒単位で数えていて、
+// ちょうど 1 秒だと境目で同じ 1 秒に 2 本入るのだとみている（確かめてはいない）。余裕を見て 1.5 秒にした。
+// 呼び出すのは新刊のキャッシュの取り直しだけで、1 回あたり十数本（30 秒弱）なので、待ち時間は裏で吸収できる。
+const minRequestInterval = 1500 * time.Millisecond
 
 // Book は書籍検索の 1 件のうち、新刊の欄で使う項目。
 type Book struct {
@@ -63,9 +68,26 @@ type searchResponse struct {
 	Items     []Book `json:"items"`
 }
 
+// errorResponse は失敗時の本文。文書の形（error / error_description）と、2026-10-25 に実際に返ってきた形
+// （{"errors": {"errorCode": 403, "errorMessage": "REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING"}}）の両方を読む。
+// 理由がログに出ないと、403 の原因（Referer の欠落など）が分からない。
 type errorResponse struct {
 	Error            string `json:"error"`
 	ErrorDescription string `json:"error_description"`
+	Errors           struct {
+		ErrorMessage string `json:"errorMessage"`
+	} `json:"errors"`
+}
+
+func (e errorResponse) reason() string {
+	switch {
+	case e.Errors.ErrorMessage != "":
+		return e.Errors.ErrorMessage
+	case e.Error != "":
+		return e.Error + ": " + e.ErrorDescription
+	default:
+		return ""
+	}
 }
 
 // Client は楽天ブックス書籍検索 API への HTTP クライアント。
@@ -74,6 +96,8 @@ type Client struct {
 	endpoint      string
 	applicationID string
 	accessKey     string
+	referer       string
+	origin        string
 
 	mu       sync.Mutex
 	lastCall time.Time
@@ -93,18 +117,37 @@ func WithRequestInterval(d time.Duration) Option {
 	return func(c *Client) { c.interval = d }
 }
 
-func NewClient(applicationID, accessKey string, opts ...Option) *Client {
+// NewClient の referer は、楽天のアプリ設定の「許可されたウェブサイト」に登録したサイトの URL
+// （"https://mirokuapp.com/"）。Referer と Origin のヘッダで送る。2026-10-25 に確かめたところ、Referer だけでは
+// 同じ 403 になり、Origin も付けると通った。
+//
+// アプリの種類を「API/バックエンドサービス」にすると、許可は IP アドレスで登録することになるが、ECS のタスクの
+// IP はデプロイや Spot の中断のたびに変わる。なので「ウェブアプリケーション」で登録し、サーバーからも
+// ヘッダで送っている。2026-10-25 に確かめたところ、ヘッダが無いと 403
+// （REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING）、あれば手元のマシンからでも 200 だった。
+func NewClient(applicationID, accessKey, referer string, opts ...Option) *Client {
 	c := &Client{
 		httpClient:    &http.Client{Timeout: 10 * time.Second},
 		endpoint:      defaultEndpoint,
 		applicationID: applicationID,
 		accessKey:     accessKey,
+		referer:       referer,
+		origin:        originOf(referer),
 		interval:      minRequestInterval,
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
 	return c
+}
+
+// originOf は URL から Origin ヘッダの値（scheme://host）を取り出す。読めなければ空にし、Origin は送らない。
+func originOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // throttle は直前の呼び出しから interval 経つまで待つ（jikan.Client と同じ形）。
@@ -161,6 +204,10 @@ func (c *Client) LatestComics(ctx context.Context, page int) (*Page, error) {
 	// accessKey はクエリでもヘッダでも渡せる。クエリに入れると、失敗時の *url.Error や
 	// アクセスログに URL ごと残るので、ヘッダで渡す
 	req.Header.Set("accessKey", c.accessKey)
+	req.Header.Set("Referer", c.referer)
+	if c.origin != "" {
+		req.Header.Set("Origin", c.origin)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -178,9 +225,16 @@ func (c *Client) LatestComics(ctx context.Context, page int) (*Page, error) {
 	case http.StatusNotFound:
 		return &Page{Items: []Book{}}, nil
 	default:
+		// どちらの形でも読めなかったとき（2026-10-25 の 429 がそうだった）に理由が空にならないよう、本文の先頭を残す。
+		// 失敗の本文に applicationId や accessKey は入らない
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		var e errorResponse
-		_ = json.NewDecoder(resp.Body).Decode(&e)
-		return nil, fmt.Errorf("rakuten: books search failed: %s (%s: %s)", resp.Status, e.Error, e.ErrorDescription)
+		_ = json.Unmarshal(raw, &e)
+		reason := e.reason()
+		if reason == "" {
+			reason = strings.TrimSpace(string(raw))
+		}
+		return nil, fmt.Errorf("rakuten: books search failed: %s (%s)", resp.Status, reason)
 	}
 
 	var body searchResponse

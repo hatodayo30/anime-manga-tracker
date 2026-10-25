@@ -46,6 +46,10 @@ type Config struct {
 	// アクセスキーは本物の秘密なので、本番では ANTHROPIC_API_KEY と同じく SSM から secrets で渡す。
 	RakutenApplicationID string
 	RakutenAccessKey     string
+	// RakutenReferer は楽天へのリクエストに付ける Referer。楽天のアプリ設定の「許可されたウェブサイト」に
+	// 登録したサイトでないと 403 になる（rakuten.NewClient のコメント）。手元でも本番と同じ値を送れば通る。
+	// 秘密ではないので、本番は environment で変えられる
+	RakutenReferer string
 }
 
 // Load は .env（存在すれば）と環境変数から設定を読み込む。
@@ -79,6 +83,7 @@ func Load() (*Config, error) {
 
 		RakutenApplicationID: os.Getenv("RAKUTEN_APPLICATION_ID"),
 		RakutenAccessKey:     os.Getenv("RAKUTEN_ACCESS_KEY"),
+		RakutenReferer:       getEnv("RAKUTEN_REFERER", "https://mirokuapp.com/"),
 	}
 
 	if cfg.DatabaseURL == "" {

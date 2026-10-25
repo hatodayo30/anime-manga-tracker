@@ -125,7 +125,7 @@ func run() error {
 	var rakutenGateway newreleases.Gateway
 	switch {
 	case cfg.RakutenApplicationID != "" && cfg.RakutenAccessKey != "":
-		rakutenGateway = rakuten.NewClient(cfg.RakutenApplicationID, cfg.RakutenAccessKey)
+		rakutenGateway = rakuten.NewClient(cfg.RakutenApplicationID, cfg.RakutenAccessKey, cfg.RakutenReferer)
 		log.Printf("rakuten: enabled")
 	case cfg.RakutenApplicationID != "" || cfg.RakutenAccessKey != "":
 		// 片方だけ入っているのは入れ忘れなので、黙って無効にせずログで分かるようにする

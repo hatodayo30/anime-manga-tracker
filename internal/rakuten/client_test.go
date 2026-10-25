@@ -15,7 +15,7 @@ func newServer(t *testing.T, handler http.HandlerFunc) *rakuten.Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return rakuten.NewClient("app-id", "secret-key", rakuten.WithEndpoint(srv.URL), rakuten.WithRequestInterval(0))
+	return rakuten.NewClient("app-id", "secret-key", "https://mirokuapp.com/", rakuten.WithEndpoint(srv.URL), rakuten.WithRequestInterval(0))
 }
 
 // コミック・発売日の新しい順・在庫切れを含む・formatVersion=2 で問い合わせ、accessKey はクエリでなく
@@ -51,6 +51,13 @@ func TestLatestComics_SendsQueryAndHeader(t *testing.T) {
 	}
 	if h := got.Header.Get("accessKey"); h != "secret-key" {
 		t.Errorf("accessKey header = %q, want %q", h, "secret-key")
+	}
+	// Referer が無いと楽天は 403（REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING）を返す（2026-10-25 に確認）
+	if h := got.Header.Get("Referer"); h != "https://mirokuapp.com/" {
+		t.Errorf("Referer header = %q, want %q", h, "https://mirokuapp.com/")
+	}
+	if h := got.Header.Get("Origin"); h != "https://mirokuapp.com" {
+		t.Errorf("Origin header = %q, want %q", h, "https://mirokuapp.com")
 	}
 }
 
@@ -129,7 +136,7 @@ func TestLatestComics_TransportErrorOmitsURL(t *testing.T) {
 	endpoint := srv.URL
 	srv.Close() // 閉じたサーバーに向けて接続を失敗させる
 
-	c := rakuten.NewClient("app-id", "secret-key", rakuten.WithEndpoint(endpoint), rakuten.WithRequestInterval(0))
+	c := rakuten.NewClient("app-id", "secret-key", "https://mirokuapp.com/", rakuten.WithEndpoint(endpoint), rakuten.WithRequestInterval(0))
 	_, err := c.LatestComics(context.Background(), 1)
 	if err == nil {
 		t.Fatal("expected error")
@@ -151,5 +158,33 @@ func TestLatestComics_RejectsOutOfRangePage(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Errorf("expected no requests, got %d", calls)
+	}
+}
+
+// 実際の楽天が返す形（{"errors": {"errorMessage": ...}}）の失敗でも、理由をエラーに含めることを保証する。
+// 含めないと、403 の原因（Referer の欠落など）がログから分からない。
+func TestLatestComics_ErrorStatusNewShape(t *testing.T) {
+	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"errors":{"errorCode":403,"errorMessage":"REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING"}}`))
+	})
+
+	_, err := c.LatestComics(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "REQUEST_CONTEXT_BODY_HTTP_REFERRER_MISSING") {
+		t.Fatalf("expected error with the rakuten reason, got %v", err)
+	}
+}
+
+// どちらの形でも読めない失敗の本文は、先頭をそのまま理由に入れることを保証する。2026-10-25 の 429 では
+// 理由が空（"(: )"）になり、原因が分からなかった。
+func TestLatestComics_ErrorStatusUnknownShape(t *testing.T) {
+	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`Too many requests`))
+	})
+
+	_, err := c.LatestComics(context.Background(), 1)
+	if err == nil || !strings.Contains(err.Error(), "Too many requests") {
+		t.Fatalf("expected error with the raw body, got %v", err)
 	}
 }
