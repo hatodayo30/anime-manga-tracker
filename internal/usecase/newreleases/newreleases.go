@@ -6,7 +6,9 @@ package newreleases
 
 import (
 	"context"
+	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -17,8 +19,25 @@ import (
 
 // Gateway は Usecase が新刊の取得に必要とする楽天ブックス側の操作。実装は internal/rakuten が提供する。
 type Gateway interface {
-	// LatestComics はコミックを発売日の新しい順に並べた結果の page ページ目（1 始まり）を返す。
-	LatestComics(ctx context.Context, page int) (*rakuten.Page, error)
+	// LatestComics はジャンル genreID の本を発売日の新しい順に並べた結果の page ページ目（1 始まり）を返す。
+	LatestComics(ctx context.Context, genreID string, page int) (*rakuten.Page, error)
+}
+
+// genre は新刊を引くジャンル。漫画（コミック）の下のジャンルを全部、この順で引く。
+type genre struct {
+	id   string
+	name string
+}
+
+// genres を 1 本にまとめて引かないのは、「発売日の新しい順」の先頭に予約が数千件並び、page の上限（100）までに
+// 直近の発売日に届かなくなりかけたため（2026-10-25、BACKLOG 11-b）。ジャンルで分ければ 1 本あたりの予約が減る。
+var genres = []genre{
+	{rakuten.GenreShonen, "少年"},
+	{rakuten.GenreShojo, "少女"},
+	{rakuten.GenreSeinen, "青年"},
+	{rakuten.GenreLadies, "レディース"},
+	{rakuten.GenreBunko, "文庫"},
+	{rakuten.GenreOtherCm, "その他"},
 }
 
 // windowDays は「新刊」とする日数（今日を含む直近 7 日）。
@@ -30,10 +49,10 @@ type Gateway interface {
 // 未発売（予約）は含めない。「新着」タブの新連載（11-a）と同じく、出たものを見せる欄にする。
 const windowDays = 7
 
-// maxScanPages は期間内の結果を読み進めるページ数の上限（30 件 × 10 = 300 件）。
-// 1 週間ぶんの見込み（200〜300 点）を読み切れる数にしてある。足りずに打ち切ったときは
-// Result.Truncated を立てる。
-const maxScanPages = 10
+// maxScanPages は 1 つのジャンルで期間内の結果を読み進めるページ数の上限（30 件 × 5 = 150 件）。
+// 1 週間ぶんの見込み（全ジャンルで 200〜300 点）を、いちばん多いジャンルでも読み切れる数にしてある。
+// 足りずに打ち切ったときは Result.Truncated を立てる。
+const maxScanPages = 5
 
 // cacheTTL は新刊の一覧を保持する時間。
 //
@@ -60,10 +79,13 @@ type Item struct {
 	SalesDate string `json:"salesDate"`
 	// SalesDateApproximate は楽天の表記が「YYYY年MM月DD日頃」だったこと。日付は確定していないが
 	// 日まで分かっているので期間の判定には使う。画面で「頃」を添えるための印。
-	SalesDateApproximate bool   `json:"salesDateApproximate"`
-	Price                int    `json:"price"`
-	URL                  string `json:"url"`
-	ImageURL             string `json:"imageUrl"`
+	SalesDateApproximate bool `json:"salesDateApproximate"`
+	Price                int  `json:"price"`
+	// URL は商品ページ。アフィリエイト ID を設定していればアフィリエイト経由の URL（規約第 3 条、BACKLOG 11-b）。
+	URL      string `json:"url"`
+	ImageURL string `json:"imageUrl"`
+	// Genre は楽天のジャンル名（少年・少女・青年・レディース・文庫・その他）。画面の絞り込みに使う
+	Genre string `json:"genre"`
 }
 
 // Result は新刊の一覧。
@@ -76,9 +98,12 @@ type Result struct {
 	To   string `json:"to,omitempty"`
 	// FetchedAt は楽天から取った時刻（RFC 3339）。キャッシュが最長 cacheTTL 古いので、画面で出せるように返す。
 	FetchedAt string `json:"fetchedAt,omitempty"`
-	// Truncated は期間内の結果を読み切れなかったこと（maxScanPages か、API の page 上限に届いた）。
-	Truncated bool   `json:"truncated"`
-	Items     []Item `json:"items"`
+	// Truncated は期間内の結果を読み切れなかったこと（どれかのジャンルで maxScanPages か、API の page 上限に届いた）。
+	Truncated bool `json:"truncated"`
+	// Loading は一覧をまだ取り終えていないこと（起動直後など）。全ジャンルを取るのに 1 分を超え、
+	// サーバーの WriteTimeout（60 秒）より長いので、待たせずにこれを返す。画面は「取得中」を出す
+	Loading bool   `json:"loading,omitempty"`
+	Items   []Item `json:"items"`
 }
 
 type Usecase struct {
@@ -102,8 +127,23 @@ func (u *Usecase) Comics(ctx context.Context) (*Result, error) {
 	if u.gateway == nil {
 		return &Result{Configured: false, Items: []Item{}}, nil
 	}
-	return u.cache.Get(ctx, "", u.fetch)
+	if _, ok := u.cache.Peek(""); ok {
+		// 取得済みの値がある。TTL 切れなら Get が古い値を返しつつ裏で取り直す
+		return u.cache.Get(ctx, "", u.fetch)
+	}
+	// まだ値が無い（起動直後で Warm が走っている、または失敗が続いている）。取得を待たせると
+	// WriteTimeout を超えるので、裏で取得を始めて「取得中」を返す。取得中のキーの Refresh は何もしない
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), backgroundFetchTimeout)
+		defer cancel()
+		_ = u.cache.Refresh(ctx, "", u.fetch)
+	}()
+	return &Result{Configured: true, Loading: true, Items: []Item{}}, nil
 }
+
+// backgroundFetchTimeout は利用者のリクエストから裏で始めた取得の打ち切り時間。全ジャンルで
+// 60 本前後 × 1.5 秒の見込みに余裕を持たせた
+const backgroundFetchTimeout = 5 * time.Minute
 
 // Warm は新刊の一覧を TTL の残りに関わらず取り直す。起動直後と WarmInterval ごとに
 // internal/scheduler から呼ばれる。キーが無ければ何もしない。
@@ -114,25 +154,51 @@ func (u *Usecase) Warm(ctx context.Context) error {
 	return u.cache.Refresh(ctx, "", u.fetch)
 }
 
-// fetch は楽天の「発売日の新しい順」から、期間内のコミックを取り出す。
+// fetch は全ジャンルの期間内の新刊を取り、発売日の新しい順にまとめる。
 //
-// 楽天の書籍検索には日付で絞る引数が無く、-releaseDate の先頭には未発売の予約が並ぶ。予約は
-// 1〜2 か月先まであり、コミックだけで千件単位になるので、先頭から順に読むと期間に届くまでに
-// 数十ページかかる（page は 100 までなので、届かないこともある）。そこで発売日の並びを使って
-// 「今日以前の発売日が初めて現れるページ」を二分探索で見つけ、そこから期間を抜けるまで読み進める。
-// 100 ページでも二分探索は 7 本で済む。
-//
-// 失敗はどのページでも全体の失敗にする。途中までの一覧を 6 時間「新刊はこれだけ」として配るより、
+// 失敗はどのジャンル・どのページでも全体の失敗にする。途中までの一覧を 6 時間「新刊はこれだけ」として配るより、
 // キャッシュの古い値を返し続ける方がよい（cache.TTLCache は失敗を保持せず、古い値を残す）。
 func (u *Usecase) fetch(ctx context.Context) (*Result, error) {
 	now := u.now().In(jst)
 	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
 	from := to.AddDate(0, 0, -(windowDays - 1))
 
-	f := &pageFetcher{gateway: u.gateway, pages: map[int]*rakuten.Page{}}
+	result := &Result{
+		Configured: true,
+		From:       from.Format(time.DateOnly),
+		To:         to.Format(time.DateOnly),
+		FetchedAt:  now.Format(time.RFC3339),
+		Items:      []Item{},
+	}
+	// 同じ本が 2 つのジャンルに入っていることもありうるので、ジャンルをまたいで重複を除く
+	seen := map[string]bool{}
+	for _, g := range genres {
+		items, finished, err := u.fetchGenre(ctx, g, from, to, seen)
+		if err != nil {
+			return nil, fmt.Errorf("genre %s: %w", g.name, err)
+		}
+		result.Items = append(result.Items, items...)
+		if !finished {
+			result.Truncated = true
+		}
+	}
+	// ジャンルごとに発売日の新しい順なので、まとめたあと発売日で並べ直す（同じ日の中はジャンルの順のまま）
+	slices.SortStableFunc(result.Items, func(a, b Item) int { return strings.Compare(b.SalesDate, a.SalesDate) })
+	return result, nil
+}
+
+// fetchGenre は 1 つのジャンルの「発売日の新しい順」から、期間内の本を取り出す。finished は期間内を読み切ったか。
+//
+// 楽天の書籍検索には日付で絞る引数が無く、-releaseDate の先頭には未発売の予約が並ぶ。予約は
+// 1〜2 か月先まであり、ジャンルで分けても千件単位になるので、先頭から順に読むと期間に届くまでに
+// 数十ページかかる（page は 100 までなので、届かないこともある）。そこで発売日の並びを使って
+// 「今日以前の発売日が初めて現れるページ」を二分探索で見つけ、そこから期間を抜けるまで読み進める。
+// 100 ページでも二分探索は 7 本で済む。
+func (u *Usecase) fetchGenre(ctx context.Context, g genre, from, to time.Time, seen map[string]bool) ([]Item, bool, error) {
+	f := &pageFetcher{gateway: u.gateway, genreID: g.id, pages: map[int]*rakuten.Page{}}
 	first, err := f.get(ctx, 1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	lastPage := min(max(first.PageCount, 1), rakuten.MaxPage)
 
@@ -142,7 +208,7 @@ func (u *Usecase) fetch(ctx context.Context) (*Result, error) {
 		mid := (start + end) / 2
 		pg, err := f.get(ctx, mid)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if reachedOnOrBefore(pg, to) {
 			end = mid
@@ -151,24 +217,16 @@ func (u *Usecase) fetch(ctx context.Context) (*Result, error) {
 		}
 	}
 
-	result := &Result{
-		Configured: true,
-		From:       from.Format(time.DateOnly),
-		To:         to.Format(time.DateOnly),
-		FetchedAt:  now.Format(time.RFC3339),
-		Items:      []Item{},
-	}
-
-	seen := map[string]bool{}
+	items := []Item{}
 	finished := false
 	page := start
 	for scanned := 0; page <= lastPage && scanned < maxScanPages; scanned++ {
 		pg, err := f.get(ctx, page)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		for _, b := range pg.Items {
-			d, approx, ok := parseSalesDate(b.SalesDate)
+			d, approx, ok := ParseSalesDate(b.SalesDate)
 			if !ok || d.Before(from) || d.After(to) {
 				continue
 			}
@@ -181,7 +239,7 @@ func (u *Usecase) fetch(ctx context.Context) (*Result, error) {
 				continue
 			}
 			seen[key] = true
-			result.Items = append(result.Items, toItem(b, d, approx))
+			items = append(items, toItem(b, d, approx, g.name))
 		}
 		page++
 		if passedBefore(pg, from) {
@@ -194,14 +252,14 @@ func (u *Usecase) fetch(ctx context.Context) (*Result, error) {
 	if page > lastPage && lastPage < rakuten.MaxPage {
 		finished = true
 	}
-	result.Truncated = !finished
-	return result, nil
+	return items, finished, nil
 }
 
 // pageFetcher は 1 回の fetch の中で同じページを 2 度取らないためのもの。二分探索の最後に見たページは
 // 読み進めの最初のページでもある。
 type pageFetcher struct {
 	gateway Gateway
+	genreID string
 	pages   map[int]*rakuten.Page
 }
 
@@ -209,7 +267,7 @@ func (f *pageFetcher) get(ctx context.Context, page int) (*rakuten.Page, error) 
 	if pg, ok := f.pages[page]; ok {
 		return pg, nil
 	}
-	pg, err := f.gateway.LatestComics(ctx, page)
+	pg, err := f.gateway.LatestComics(ctx, f.genreID, page)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +300,7 @@ func passedBefore(pg *rakuten.Page, day time.Time) bool {
 
 func lastDefiniteDate(pg *rakuten.Page) (time.Time, bool) {
 	for i := len(pg.Items) - 1; i >= 0; i-- {
-		if d, _, ok := parseSalesDate(pg.Items[i].SalesDate); ok {
+		if d, _, ok := ParseSalesDate(pg.Items[i].SalesDate); ok {
 			return d, true
 		}
 	}
@@ -251,7 +309,7 @@ func lastDefiniteDate(pg *rakuten.Page) (time.Time, bool) {
 
 var salesDatePattern = regexp.MustCompile(`^(\d{4})年(\d{1,2})月(\d{1,2})日(.*)$`)
 
-// parseSalesDate は楽天の salesDate を日付にする。
+// ParseSalesDate は楽天の salesDate を日付にする。既刊の巻数（usecase/volumes）でも同じ扱いにするため公開している。
 //
 // 扱いを決めたこと:
 //   - 「YYYY年MM月DD日」は確定した発売日として使う
@@ -261,7 +319,7 @@ var salesDatePattern = regexp.MustCompile(`^(\d{4})年(\d{1,2})月(\d{1,2})日(.
 //     まだ出ていない本が新刊の欄に並ぶ
 //   - 「YYYY年MM月DD日以降」のように日の後ろに「頃」以外が付くものも捨てる。「以降」は下限でしかなく、
 //     その日に出たとは言えない
-func parseSalesDate(s string) (date time.Time, approximate bool, ok bool) {
+func ParseSalesDate(s string) (date time.Time, approximate bool, ok bool) {
 	m := salesDatePattern.FindStringSubmatch(strings.TrimSpace(s))
 	if m == nil {
 		return time.Time{}, false, false
@@ -284,7 +342,11 @@ func parseSalesDate(s string) (date time.Time, approximate bool, ok bool) {
 	return date, approximate, true
 }
 
-func toItem(b rakuten.Book, date time.Time, approximate bool) Item {
+func toItem(b rakuten.Book, date time.Time, approximate bool, genreName string) Item {
+	url := b.ItemURL
+	if b.AffiliateURL != "" {
+		url = b.AffiliateURL
+	}
 	return Item{
 		Title:                b.Title,
 		SeriesName:           b.SeriesName,
@@ -294,7 +356,8 @@ func toItem(b rakuten.Book, date time.Time, approximate bool) Item {
 		SalesDate:            date.Format(time.DateOnly),
 		SalesDateApproximate: approximate,
 		Price:                b.ItemPrice,
-		URL:                  b.ItemURL,
+		URL:                  url,
 		ImageURL:             b.LargeImageURL,
+		Genre:                genreName,
 	}
 }

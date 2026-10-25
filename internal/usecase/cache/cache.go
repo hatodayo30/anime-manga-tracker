@@ -131,6 +131,22 @@ func (c *TTLCache[T]) Get(ctx context.Context, key string, fetch func(context.Co
 	return e.data, e.err
 }
 
+// Peek は key の値を、取得を待たず・走らせずに返す。返せる値（取得が終わっていて、失敗しておらず、
+// staleTTL より新しい）が無ければ false。
+//
+// 取得に数十秒かかる用途（楽天の新刊は 1 分を超える）で、利用者のリクエストを取得の完了まで待たせると
+// サーバーの WriteTimeout（60 秒）を超えるため、「まだ無い」と即答するのに使う。
+func (c *TTLCache[T]) Peek(key string) (T, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var zero T
+	e, ok := c.items[key]
+	if !ok || !e.done() || e.err != nil || time.Since(e.fetchedAt) >= c.staleTTL {
+		return zero, false
+	}
+	return e.data, true
+}
+
 // Refresh はTTLの残り時間に関わらず値を取り直す。起動時のウォームアップと定期リフレッシュ
 // （internal/scheduler から呼ばれる）のための入口で、利用者がTTL切れや空のキャッシュを踏む前に
 // 中身を入れ替えるのが目的。

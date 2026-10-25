@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkModal } from '../components/WorkModalContext'
 import { useAuth } from '../context/AuthContext'
 import { useKind } from '../hooks/useKind'
@@ -61,6 +61,16 @@ type LibraryByKind = Partial<Record<MediaKind, Map<number, LibraryRecord>>>
 
 export function SearchPage() {
   const [kind, setKind] = useKind()
+  // 「新着」の新刊から ?q=作品名&kind=manga で来たとき、その種別と作品名で検索を始める（BACKLOG 11-b）。
+  // 種別は最初の 1 回だけ合わせる。useKind は localStorage に残すので、描画のたびに戻すと切り替えられなくなる
+  const [searchParams] = useSearchParams()
+  const initialTitleQuery = searchParams.get('q') ?? undefined
+  const kindParam = searchParams.get('kind')
+  const [kindApplied, setKindApplied] = useState(false)
+  if (!kindApplied) {
+    setKindApplied(true)
+    if ((kindParam === 'anime' || kindParam === 'manga') && kindParam !== kind) setKind(kindParam)
+  }
   const { user, refresh } = useAuth()
   const navigate = useNavigate()
   const openWorkModal = useWorkModal()
@@ -133,6 +143,7 @@ export function SearchPage() {
       onLoginClick={() => navigate('/login?next=%2Fsearch')}
       searchByTitle={searchByTitle}
       searchByContent={searchByContent}
+      initialTitleQuery={initialTitleQuery}
       onOpenWork={openWork}
       statusLabelFor={statusLabelFor}
     />

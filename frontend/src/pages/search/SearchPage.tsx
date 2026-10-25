@@ -34,6 +34,8 @@ export interface SearchPageProps {
   searchByTitle: (query: string, kind: MediaKind, signal: AbortSignal) => Promise<WorkSummary[]>
   /** 内容で探す（今の API）。従来検索に落ちたときは fallback に理由を入れて返す */
   searchByContent: (text: string, kind: MediaKind, signal: AbortSignal) => Promise<ContentSearchResult>
+  /** 最初に入れておく作品名（「新着」の新刊から「作品を探して記録する」で来たとき）。入っていればすぐ検索する */
+  initialTitleQuery?: string
   /** ポスターを押したとき（作品モーダルを開く） */
   onOpenWork: (work: WorkSummary) => void
   /**
@@ -57,15 +59,18 @@ function staggerStyle(index: number): CSSProperties {
   return { ['--srch-i' as string]: Math.min(index, STAGGER_CAP) } as CSSProperties
 }
 
-export function SearchPage({ kind, onKindChange, isLoggedIn, onLoginClick, searchByTitle, searchByContent, onOpenWork, statusLabelFor }: SearchPageProps) {
+export function SearchPage({ kind, onKindChange, isLoggedIn, onLoginClick, searchByTitle, searchByContent, initialTitleQuery, onOpenWork, statusLabelFor }: SearchPageProps) {
   const [mode, setMode] = useState<Mode>('title')
   const [showLogin, setShowLogin] = useState(false)
 
   // ----- 作品名 -----
-  const [titleQuery, setTitleQuery] = useState('')
+  const [titleQuery, setTitleQuery] = useState(initialTitleQuery ?? '')
   // query は検索した言葉。見出しに打っている途中の文字ではなく、結果の元になった言葉を出すため
   const [titleResult, setTitleResult] = useState<{ query: string; works: WorkSummary[] } | null>(null)
   const [titleError, setTitleError] = useState(false)
+  // 作品名の検索の応答待ち。普段は 1 秒もかからないが、AniList のレート制限や Jikan での補完で数秒かかることがあり、
+  // その間に何も出ないと「見つからなかった」と取り違える（2026-10-25 に実際に起きた）
+  const [titleLoading, setTitleLoading] = useState(false)
   const [titleRun, setTitleRun] = useState(0) // 結果が変わるたびに増やし、フェードを最初から流す
   const [recent, setRecent] = useState<string[]>(() => loadRecent())
   // IME で変換している間は自動検索しない（変換前のかなで AniList を呼ばない。レートはプロセス全体で 24 req/分）。
@@ -114,6 +119,7 @@ export function SearchPage({ kind, onKindChange, isLoggedIn, onLoginClick, searc
         lastTitleKey.current = ''
         setTitleResult(null)
         setTitleError(false)
+        setTitleLoading(false)
         return
       }
       if (!force && key === lastTitleKey.current) return // 自動検索と Enter が重なったときの二重呼び出しを防ぐ
@@ -121,6 +127,7 @@ export function SearchPage({ kind, onKindChange, isLoggedIn, onLoginClick, searc
       titleAbort.current?.abort()
       const controller = new AbortController()
       titleAbort.current = controller
+      setTitleLoading(true)
       try {
         const works = await searchByTitle(q, kind, controller.signal)
         if (controller.signal.aborted) return
@@ -131,6 +138,9 @@ export function SearchPage({ kind, onKindChange, isLoggedIn, onLoginClick, searc
         if (isAbortError(err) || controller.signal.aborted) return
         lastTitleKey.current = ''
         setTitleError(true)
+      } finally {
+        // 新しい検索に中断されたときは、その検索がまだ応答待ちなので消さない
+        if (!controller.signal.aborted) setTitleLoading(false)
       }
     },
     [kind, searchByTitle],
@@ -353,6 +363,15 @@ export function SearchPage({ kind, onKindChange, isLoggedIn, onLoginClick, searc
           )}
 
           {titleError && <ErrorNotice onRetry={() => void runTitle(titleQuery, true)} />}
+
+          {titleLoading && titleQuery.trim() && (
+            <div className="srch-wait srch-fade" role="status" aria-live="polite">
+              <span className="srch-spinner" aria-hidden="true" />
+              <div className="srch-wait-text">
+                <b>検索しています</b>
+              </div>
+            </div>
+          )}
 
           {titleQuery.trim() && titleResult && (
             <>
