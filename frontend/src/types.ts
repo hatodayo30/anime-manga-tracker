@@ -42,6 +42,11 @@ export interface AniListItem {
 }
 
 // GET /api/home/trending-manga の各要素（AniListItem + MAL由来の付加情報）。
+// GET /api/home/new-series（「新着」タブの新連載）の 1 件。startedOn は連載の開始日（"2026-10-23"）
+export interface NewSeriesItem extends AniListItem {
+  startedOn: string
+}
+
 export interface MangaRankingItem extends AniListItem {
   malRank?: number | null
   members?: number | null

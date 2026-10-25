@@ -3,6 +3,7 @@ package anilist
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 )
@@ -135,5 +136,12 @@ func TestBuildCharacterQuery(t *testing.T) {
 		if strings.Contains(q, unwanted) {
 			t.Errorf("expected query not to contain %q", unwanted)
 		}
+	}
+}
+
+// AniList の FuzzyDateInt（YYYYMMDD）の形にすることを保証する。月日を 2 桁にしないと 2026-1-5 が 202615 になる。
+func TestFuzzyDateInt(t *testing.T) {
+	if got := fuzzyDateInt(time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)); got != 20260105 {
+		t.Errorf("got %d, want 20260105", got)
 	}
 }

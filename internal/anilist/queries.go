@@ -822,3 +822,80 @@ func matchesFilter(genres []string, tagRanks map[string]int, f Filter) bool {
 	}
 	return true
 }
+
+// newSeriesQuery は最近始まった日本の漫画の連載を人気順に取る（「新着」タブの新連載）。
+//
+// 2026-10-25 に AniList を直接叩いて確かめたこと:
+//   - 開始日の新しい順（START_DATE_DESC）にすると、利用者のほぼいない作品ばかりになるので、
+//     「開始日が since より後」で絞って人気順にした
+//   - 国で絞らないと上位が韓国のウェブトゥーンで埋まり、題名がハングルになる。画面は日本語表示だけに
+//     する方針（BACKLOG 6）なので、countryOfOrigin: "JP" に絞った
+//   - startDate_greater で絞っても、2021 年開始の作品が 1 件混ざった。AniList 側のデータの都合とみられるので、
+//     受け取ってから開始日で絞り直す（NewSeriesManga）
+const newSeriesQuery = `
+query ($since: FuzzyDateInt, $perPage: Int) {
+  Page(page: 1, perPage: $perPage) {
+    media(type: MANGA, status: RELEASING, countryOfOrigin: "JP", startDate_greater: $since, sort: [POPULARITY_DESC], isAdult: false) {` + mediaFields + `
+      startDate { year month day }
+    }
+  }
+}
+`
+
+// newSeriesPerPage は開始日で絞り直して減るぶんを見込み、AniList の Page.perPage 上限（50）まで取る
+const newSeriesPerPage = 50
+
+// NewSeries は新連載 1 件。StartedOn は連載の開始日（"2026-10-23"）。
+type NewSeries struct {
+	SearchResult
+	StartedOn string `json:"startedOn"`
+}
+
+type newSeriesResponse struct {
+	Page struct {
+		Media []struct {
+			media
+			StartDate struct {
+				Year  *int `json:"year"`
+				Month *int `json:"month"`
+				Day   *int `json:"day"`
+			} `json:"startDate"`
+		} `json:"media"`
+	} `json:"Page"`
+}
+
+// NewSeriesManga は since の翌日以降に始まった日本の漫画の連載を、人気順に返す。
+// 開始日が年月日まで分からない作品は、since より後かを判定できないので除く。
+func (c *Client) NewSeriesManga(ctx context.Context, since time.Time) ([]NewSeries, error) {
+	var resp newSeriesResponse
+	err := c.do(ctx, newSeriesQuery, map[string]any{
+		"since":   fuzzyDateInt(since),
+		"perPage": newSeriesPerPage,
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	sinceDay := since.Format(time.DateOnly)
+	out := make([]NewSeries, 0, len(resp.Page.Media))
+	for _, m := range resp.Page.Media {
+		d := m.StartDate
+		if d.Year == nil || d.Month == nil || d.Day == nil {
+			continue
+		}
+		startedOn := fmt.Sprintf("%04d-%02d-%02d", *d.Year, *d.Month, *d.Day)
+		if startedOn <= sinceDay {
+			continue
+		}
+		out = append(out, NewSeries{
+			SearchResult: toSearchResults(domain.MediaTypeManga, []media{m.media})[0],
+			StartedOn:    startedOn,
+		})
+	}
+	return out, nil
+}
+
+// fuzzyDateInt は AniList の FuzzyDateInt（YYYYMMDD の整数）にする。
+func fuzzyDateInt(t time.Time) int {
+	return t.Year()*10000 + int(t.Month())*100 + t.Day()
+}

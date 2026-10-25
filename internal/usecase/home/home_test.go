@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/anilist"
 	"github.com/hatodayo30/anime-manga-tracker/internal/jikan"
@@ -18,6 +19,8 @@ type fakeAniList struct {
 	trendingAnimeCalls  int32
 	trendingMangaCalls  int32
 	trendingManga       []anilist.SearchResult
+	newSeriesCalls      int32
+	gotSince            time.Time
 	err                 error // 非nilなら全メソッドがこれを返す
 }
 
@@ -39,6 +42,12 @@ func (f *fakeAniList) TrendingAnime(ctx context.Context) ([]anilist.SearchResult
 func (f *fakeAniList) TrendingManga(ctx context.Context) ([]anilist.SearchResult, error) {
 	atomic.AddInt32(&f.trendingMangaCalls, 1)
 	return f.trendingManga, f.err
+}
+
+func (f *fakeAniList) NewSeriesManga(ctx context.Context, since time.Time) ([]anilist.NewSeries, error) {
+	atomic.AddInt32(&f.newSeriesCalls, 1)
+	f.gotSince = since
+	return []anilist.NewSeries{{SearchResult: anilist.SearchResult{Title: "New Series"}, StartedOn: "2026-10-23"}}, f.err
 }
 
 type fakeJikan struct {
@@ -249,5 +258,29 @@ func TestUsecase_Warm_ReportsFailures(t *testing.T) {
 	if anilistGW.seasonAnimeCalls != 1 || anilistGW.trendingAnimeCalls != 1 || anilistGW.trendingMangaCalls != 1 {
 		t.Errorf("expected every target to be attempted despite failures, got %d/%d/%d calls",
 			anilistGW.seasonAnimeCalls, anilistGW.trendingAnimeCalls, anilistGW.trendingMangaCalls)
+	}
+}
+
+// 新連載はおよそ 3 か月前より後に始まったものを AniList に頼み、2 回目以降はキャッシュから返すことを保証する。
+// 開くたびに AniList を叩くと、24 本/分の枠を新着タブだけで使ってしまう。
+func TestUsecase_NewSeriesManga_UsesWindowAndCaches(t *testing.T) {
+	anilistGW := &fakeAniList{}
+	u := home.NewUsecase(anilistGW, &fakeJikan{})
+
+	for range 2 {
+		got, err := u.NewSeriesManga(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 1 || got[0].StartedOn != "2026-10-23" {
+			t.Fatalf("unexpected result: %+v", got)
+		}
+	}
+	if anilistGW.newSeriesCalls != 1 {
+		t.Errorf("expected 1 AniList call, got %d", anilistGW.newSeriesCalls)
+	}
+	ago := time.Since(anilistGW.gotSince)
+	if ago < 89*24*time.Hour || ago > 91*24*time.Hour {
+		t.Errorf("expected since about 90 days ago, got %v ago", ago)
 	}
 }

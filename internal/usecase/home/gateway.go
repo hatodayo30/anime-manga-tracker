@@ -2,6 +2,7 @@ package home
 
 import (
 	"context"
+	"time"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/anilist"
 	"github.com/hatodayo30/anime-manga-tracker/internal/jikan"
@@ -14,6 +15,7 @@ type AniListGateway interface {
 	SeasonAnimeFor(ctx context.Context, season string, year int) ([]anilist.SearchResult, error)
 	TrendingAnime(ctx context.Context) ([]anilist.SearchResult, error)
 	TrendingManga(ctx context.Context) ([]anilist.SearchResult, error)
+	NewSeriesManga(ctx context.Context, since time.Time) ([]anilist.NewSeries, error)
 }
 
 // JikanGateway は Usecase が話題の漫画ランキングの補足情報取得に必要とする

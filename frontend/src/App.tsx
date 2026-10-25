@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/ProtectedRoute'
 import { AuthFormPage } from './pages/AuthFormPage'
 import { HomePage } from './pages/HomePage'
 import { LibraryPage } from './pages/LibraryPage'
+import { NewArrivalsPage } from './pages/NewArrivalsPage'
 import { RecommendPage } from './pages/RecommendPage'
 import { SearchPage } from './pages/SearchPage'
 import { SeasonPage } from './pages/SeasonPage'
@@ -52,6 +53,16 @@ function App() {
           <Layout>
             <ProtectedRoute>
               <RecommendPage />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/new"
+        element={
+          <Layout>
+            <ProtectedRoute>
+              <NewArrivalsPage />
             </ProtectedRoute>
           </Layout>
         }
