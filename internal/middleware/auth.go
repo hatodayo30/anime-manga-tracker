@@ -47,22 +47,8 @@ func (a *Auth) RequireUser(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-// OptionalUser はログインの有無で挙動が変わるだけの公開エンドポイントに被せる。有効なセッションが
-// あればユーザーを積み、無ければ（Cookie 無し・期限切れ・DB 障害でも）未ログインとして先へ進む。
-// 401 を返さないので、未ログインの利用者が今までどおり使える。
-func (a *Auth) OptionalUser(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		if cookie, err := c.Cookie(SessionCookieName); err == nil {
-			if user, err := a.authService.CurrentUser(c.Request().Context(), cookie.Value); err == nil {
-				c.Set(userContextKey, user)
-			}
-		}
-		return next(c)
-	}
-}
-
-// UserFromContext は RequireUser または OptionalUser を通ったリクエストの echo.Context からユーザーを取り出す。
-// OptionalUser で未ログインだった場合は nil を返す。
+// UserFromContext は RequireUser を通ったリクエストの echo.Context からユーザーを取り出す。
+// RequireUser を通っていなければ nil を返す。
 func UserFromContext(c echo.Context) *domain.User {
 	u, _ := c.Get(userContextKey).(*domain.User)
 	return u

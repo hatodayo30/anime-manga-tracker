@@ -128,7 +128,7 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 
 画面は 6 つ。ログイン・サインアップ以外の画面はすべて `ProtectedRoute` で囲っていて、
 未ログインで開くとログイン画面に飛ぶ（2026-10-25 から。それまでホーム・シーズン・おすすめはログイン不要だった）。
-API 側は画面とは別で、`/api/home/*` などは今も未ログインで叩ける。アニメ / 漫画の切り替えは `useKind` が localStorage で
+API も `/api/auth/*` と `/healthz` 以外はすべてログイン必須（2026-10-25、BACKLOG 4-a の 4）。アニメ / 漫画の切り替えは `useKind` が localStorage で
 全画面に共有する。
 
 | 画面 | 叩く API | 処理の要点 |
@@ -138,7 +138,7 @@ API 側は画面とは別で、`/api/home/*` などは今も未ログインで�
 | 検索 `/search` | `/api/search?type=&q=` | AniList 検索。ヒットが 3 件以下なら Jikan でも検索し、タイトル重複を除いて人気順にマージ |
 | 検索 `/search`（内容で探す） | `/api/search/natural?type=&q=` | ログイン必須。Claude が文をジャンル・タグ・キーワードに変換し、AniList の条件検索で引く。AI が失敗したら入力をキーワードにして従来の検索に落とす（BACKLOG 9-b）。入力のたびではなく Enter か「探す」ボタンで確定したときだけ呼ぶ。画面は `pages/search/`（案 8）で、作品名と内容の欄は入力と結果を別々に持つ |
 | マイライブラリ `/library` | `/api/records?type=&sort=` | 種別と並び順だけをサーバーに渡し、ステータス絞り込み・ジャンル絞り込み・集計は取得済み配列を `useMemo` で加工 |
-| おすすめ `/recommend` | `/api/recommendations?type=&genres=` | 「どのジャンルを見るか」はクライアントがライブラリを集計して決めるので、API 自体はログイン不要 |
+| おすすめ `/recommend` | `/api/recommendations?type=&genres=` | 「どのジャンルを見るか」はクライアントがライブラリを集計して決める（API は利用者の記録を読まない） |
 | ログイン / 登録 | `/api/auth/*` | `AuthContext` が起動時に `/api/auth/me` を叩いてログイン状態を解決 |
 
 ### 作品モーダル
@@ -440,7 +440,7 @@ stale-while-revalidate とウォームアップの価値はむしろ上がった
   別名（synonyms）のうちかなを含むもの → english の順が固定。別名に日本語タイトルが無い作品
   （"Tower of God" など）は英語のまま
 - **AI 翻訳だけが永続化される**。Claude の訳は `translations`（原文と作品名から作ったハッシュ + 翻訳先言語）に
-  保存して誰にでも返すが、MyMemory の訳は保存しない。未ログインで未保存の作品を開くと、
-  毎回 MyMemory を叩く
+  保存して全員に返すが、MyMemory の訳は保存しない。Claude が失敗して MyMemory に落ちた作品は、
+  開くたびに Claude から試し直す
 - **セッションの期限切れ行が残る**。`sessions` を掃除するジョブはない
   （スケジューラ基盤はあるので、乗せるのは容易）

@@ -9,16 +9,15 @@ import (
 
 // Handlers はルーティングに必要なハンドラ・ミドルウェア一式をまとめたもの。
 type Handlers struct {
-	Record       *RecordHandler
-	Auth         *AuthHandler
-	Search       *SearchHandler
-	Home         *HomeHandler
-	Translate    *TranslateHandler
-	Health       *HealthHandler
-	Recommend    *RecommendHandler
-	RequireUser  echo.MiddlewareFunc
-	OptionalUser echo.MiddlewareFunc
-	WebDir       string
+	Record      *RecordHandler
+	Auth        *AuthHandler
+	Search      *SearchHandler
+	Home        *HomeHandler
+	Translate   *TranslateHandler
+	Health      *HealthHandler
+	Recommend   *RecommendHandler
+	RequireUser echo.MiddlewareFunc
+	WebDir      string
 
 	// TrustProxy はレート制限のキーにするクライアント IP を X-Forwarded-For から取るかどうか。
 	// 判断の理由は config.Config.TrustProxy を参照。
@@ -136,19 +135,24 @@ func NewRouter(h Handlers) *echo.Echo {
 	records.PATCH("/:id", h.Record.Update)
 	records.DELETE("/:id", h.Record.Delete)
 
-	// 未認証で叩ける /api/* にだけ IP 単位の制限をかける。/api/records は RequireUser の内側で
-	// 利用者が特定できるので対象外。e.Group("/api") に Use すると /api/* の未定義パスを
+	// 外部 API（AniList / Jikan / MyMemory / Claude）を呼ぶ /api/* はすべてログイン必須にする（BACKLOG 4-a の 4、2026-10-25）。
+	// 画面はログイン・サインアップ以外すべてログイン必須にしてあり、ゲストログイン（8-a）もやらないと決めたので、
+	// 未ログインで叩ける理由が無くなった。未ログインで叩けると、AniList のプロセス全体の枠（24 本/分）を
+	// 誰でもただで使い潰せる（4-a）。
+	//
+	// IP 単位の制限（publicAPILimit）も残す。ログイン済みでも 1 つのアカウントから連打されれば同じ枠を食うため。
+	// /api/records は外部 API を呼ばないので対象外。e.Group("/api") に Use すると /api/* の未定義パスを
 	// Group が 404 で拾ってしまい静的ファイル配信の挙動が変わるので、ルートごとに渡している。
-	e.GET("/api/search", h.Search.Search, publicAPILimit)
-	e.GET("/api/anilist/media", h.Search.ByIDs, publicAPILimit)
-	e.GET("/api/anilist/relations", h.Search.Relations, publicAPILimit)
-	e.GET("/api/recommendations", h.Search.Recommendations, publicAPILimit)
-	e.GET("/api/home/season-anime", h.Home.SeasonAnime, publicAPILimit)
-	e.GET("/api/home/trending", h.Home.Trending, publicAPILimit)
-	e.GET("/api/home/trending-manga", h.Home.TrendingManga, publicAPILimit)
-	e.GET("/api/home/new-series", h.Home.NewSeries, publicAPILimit)
-	// translate は未ログインでも使えるが、ログイン済みなら AI 翻訳を使うので利用者を解決しておく
-	e.POST("/api/translate", h.Translate.Translate, publicAPILimit, h.OptionalUser)
+	e.GET("/api/search", h.Search.Search, publicAPILimit, h.RequireUser)
+	e.GET("/api/anilist/media", h.Search.ByIDs, publicAPILimit, h.RequireUser)
+	e.GET("/api/anilist/relations", h.Search.Relations, publicAPILimit, h.RequireUser)
+	e.GET("/api/recommendations", h.Search.Recommendations, publicAPILimit, h.RequireUser)
+	e.GET("/api/home/season-anime", h.Home.SeasonAnime, publicAPILimit, h.RequireUser)
+	e.GET("/api/home/trending", h.Home.Trending, publicAPILimit, h.RequireUser)
+	e.GET("/api/home/trending-manga", h.Home.TrendingManga, publicAPILimit, h.RequireUser)
+	e.GET("/api/home/new-series", h.Home.NewSeries, publicAPILimit, h.RequireUser)
+	// translate も同じくログイン必須。以前は未ログインなら AI を使わず MyMemory に落としていた（9-a）
+	e.POST("/api/translate", h.Translate.Translate, publicAPILimit, h.RequireUser)
 	// 自然文検索は AI を呼ぶのでログイン必須（BACKLOG 9「決めたこと」）。費用を守っているのは
 	// Claude の日次上限で、IP 単位の制限は 1 つの IP からの連打を抑えるだけ
 	e.GET("/api/search/natural", h.NLSearch.Search, publicAPILimit, h.RequireUser)

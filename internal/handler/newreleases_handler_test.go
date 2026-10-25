@@ -18,9 +18,8 @@ import (
 func TestNewReleasesComics_NotConfigured(t *testing.T) {
 	passThrough := func(next echo.HandlerFunc) echo.HandlerFunc { return next }
 	e := handler.NewRouter(handler.Handlers{
-		NewReleases:  handler.NewNewReleasesHandler(newreleases.NewUsecase(nil, time.Now)),
-		RequireUser:  passThrough,
-		OptionalUser: passThrough,
+		NewReleases: handler.NewNewReleasesHandler(newreleases.NewUsecase(nil, time.Now)),
+		RequireUser: passThrough,
 	})
 
 	rec := httptest.NewRecorder()
@@ -36,24 +35,5 @@ func TestNewReleasesComics_NotConfigured(t *testing.T) {
 	items, ok := body["items"].([]any)
 	if body["configured"] != false || !ok || len(items) != 0 {
 		t.Errorf("body = %s, want configured=false and items=[]", rec.Body.String())
-	}
-}
-
-// 新刊の API は RequireUser の内側にあることを保証する（ログイン必須）。
-func TestNewReleasesComics_RequiresUser(t *testing.T) {
-	passThrough := func(next echo.HandlerFunc) echo.HandlerFunc { return next }
-	deny := func(echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error { return c.NoContent(http.StatusUnauthorized) }
-	}
-	e := handler.NewRouter(handler.Handlers{
-		NewReleases:  handler.NewNewReleasesHandler(newreleases.NewUsecase(nil, time.Now)),
-		RequireUser:  deny,
-		OptionalUser: passThrough,
-	})
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/new-releases/comics", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }

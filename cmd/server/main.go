@@ -155,20 +155,19 @@ func run() error {
 	healthHandler := handler.NewHealthHandler(pool)
 
 	e := handler.NewRouter(handler.Handlers{
-		Record:       recordHandler,
-		Auth:         authHandler,
-		Search:       searchHandler,
-		Home:         homeHandler,
-		Translate:    translateHandler,
-		Health:       healthHandler,
-		Recommend:    recommendHandler,
-		RequireUser:  authMiddleware.RequireUser,
-		OptionalUser: authMiddleware.OptionalUser,
-		WebDir:       "frontend/dist",
-		TrustProxy:   cfg.TrustProxy,
-		NLSearch:     nlsearchHandler,
-		NewReleases:  newReleasesHandler,
-		Volumes:      volumesHandler,
+		Record:      recordHandler,
+		Auth:        authHandler,
+		Search:      searchHandler,
+		Home:        homeHandler,
+		Translate:   translateHandler,
+		Health:      healthHandler,
+		Recommend:   recommendHandler,
+		RequireUser: authMiddleware.RequireUser,
+		WebDir:      "frontend/dist",
+		TrustProxy:  cfg.TrustProxy,
+		NLSearch:    nlsearchHandler,
+		NewReleases: newReleasesHandler,
+		Volumes:     volumesHandler,
 	})
 
 	waitJobs := scheduler.New(
