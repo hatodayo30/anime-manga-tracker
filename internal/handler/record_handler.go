@@ -31,7 +31,7 @@ func (h *RecordHandler) List(c echo.Context) error {
 
 	records, err := h.usecase.List(c.Request().Context(), userID, mediaType, status, sort)
 	if err != nil {
-		return writeError(c, http.StatusBadRequest, err.Error())
+		return writeRecordError(c, err)
 	}
 	if records == nil {
 		records = []*domain.Record{}
@@ -50,7 +50,7 @@ func (h *RecordHandler) Create(c echo.Context) error {
 
 	rec, err := h.usecase.AddOrUpdateStatus(c.Request().Context(), userID, in)
 	if err != nil {
-		return writeError(c, http.StatusBadRequest, err.Error())
+		return writeRecordError(c, err)
 	}
 	return c.JSON(http.StatusCreated, rec)
 }
@@ -71,10 +71,7 @@ func (h *RecordHandler) Update(c echo.Context) error {
 
 	rec, err := h.usecase.UpdateProgressOrStatus(c.Request().Context(), userID, id, in)
 	if err != nil {
-		if errors.Is(err, record.ErrNotFound) {
-			return writeError(c, http.StatusNotFound, "record not found")
-		}
-		return writeError(c, http.StatusBadRequest, err.Error())
+		return writeRecordError(c, err)
 	}
 	return c.JSON(http.StatusOK, rec)
 }
@@ -89,10 +86,23 @@ func (h *RecordHandler) Delete(c echo.Context) error {
 	}
 
 	if err := h.usecase.Delete(c.Request().Context(), userID, id); err != nil {
-		if errors.Is(err, record.ErrNotFound) {
-			return writeError(c, http.StatusNotFound, "record not found")
-		}
-		return writeError(c, http.StatusBadRequest, err.Error())
+		return writeRecordError(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// writeRecordError は記録の操作の失敗をステータスコードに振り分ける。入力の誤り（record.InputError）だけは
+// メッセージを返し、それ以外は詳細をログにだけ残して定型文を返す。DB のエラー文にはテーブル名や制約名が
+// 入っていて、そのまま返すと画面に出る（BACKLOG 10、4-d の「上流エラーの素通し」と同じ理由）。
+func writeRecordError(c echo.Context, err error) error {
+	var inputErr *record.InputError
+	switch {
+	case errors.Is(err, record.ErrNotFound):
+		return writeError(c, http.StatusNotFound, "record not found")
+	case errors.As(err, &inputErr):
+		return writeError(c, http.StatusBadRequest, inputErr.Error())
+	default:
+		c.Logger().Errorf("record: %v", err)
+		return writeError(c, http.StatusInternalServerError, "record request failed")
+	}
 }
