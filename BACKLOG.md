@@ -997,6 +997,46 @@ AniList ID と MAL ID を確定的に対応付けられるので、ここに AI 
 日次上限の解消）がすぐ見える。9-b・9-c はログイン必須にする都合上、8（ゲストログイン）と
 4-a の 4（`RequireUser` 配下へ移す）の判断を先に済ませるのが自然。
 
+### 10. 漫画の記録を保存すると check 制約違反で失敗する — **未着手（2026-10-25 に発見）**
+
+2026-10-25 にローカルで動作確認したとき（`feat/character-search` のブランチ）、漫画の記録を保存すると
+失敗した。画面に出たメッセージ:
+
+```
+保存に失敗しました: upsert record: ERROR: new row for relation "records" violates check constraint
+"records_progress_unit_matches_media_type" (SQLSTATE 23514)
+```
+
+原因（2026-10-25 に DB と git を見て確かめた）:
+
+- **ローカルの DB に、main に無い `records.progress_unit` カラムと制約が残っている。** main のマイグレーション
+  （0001〜0005）には `progress_unit` が無い。入れたのは**マージしていないブランチ `feat/manga-progress-unit`**
+  （`419019e`、2026-09-30「進捗の記録単位を作品ごとに選べるようにする」）の `migrations/0005_record_progress_unit.up.sql`。
+  DB は全ワークツリーで共有しているので（CLAUDE.md「複数エージェントで並列作業するとき」）、そのブランチで
+  サーバーを起動したときに適用されたまま残っているとみられる
+- 実際の定義:
+  - `progress_unit text NOT NULL DEFAULT 'episode'`
+  - `CHECK ((media_type = 'anime' AND progress_unit = 'episode') OR (media_type = 'manga' AND progress_unit IN ('chapter', 'volume')))`
+- **main のコードは `progress_unit` を知らないので、漫画を新しく保存すると既定値の `'episode'` が入り、制約に掛かる。**
+  アニメは既定値のままで通るので、漫画だけ失敗する
+- `applied_migrations` の 5 番は `translations`（2026-10-24）になっていて、`record_progress_unit` の行は無い。
+  カラムだけが残った経緯は分かっていない
+- 今ある行: 漫画 14 件（`progress_unit = 'chapter'`）・アニメ 67 件（`'episode'`）
+- **本番の DB には影響しない見込み。** 本番には main のマイグレーションしか適用されていないはず（確かめてはいない）
+
+直し方の候補（着手時に決める）:
+
+- **ローカルの DB からカラムと制約を消す**（`feat/manga-progress-unit` は使わない場合）。main のコードの変更は要らない。
+  共有の DB を変える操作なので、他のワークツリーでサーバーを動かしていないときに行う
+- `feat/manga-progress-unit` の機能を入れるなら、そのブランチを main に合わせて取り込む（マイグレーションの番号は
+  0005 が `translations` と衝突するので付け直す）
+- **DB のエラー文がそのまま画面に出ている。** 4-d で「上流エラーの素通し」は定型文に直したが、レコード保存の経路は
+  `upsert record: ERROR: ...` をそのまま返している。テーブル名や制約名が利用者に見えるので、あわせて直す
+
+#### 注意
+
+共有の DB の定義を変えるか、マイグレーションを足すことになるので、**他のワークツリーと並列に進めない**。
+
 ---
 
 ## 失効した仕様
