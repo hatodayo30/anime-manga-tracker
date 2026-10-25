@@ -47,6 +47,32 @@ export interface NewSeriesItem extends AniListItem {
   startedOn: string
 }
 
+// GET /api/new-releases/comics（「新着」タブの新刊、楽天ブックス）の 1 冊。salesDate は "2026-10-24"（JST）
+export interface NewReleaseItem {
+  title: string
+  seriesName: string
+  author: string
+  publisherName: string
+  isbn: string
+  salesDate: string
+  // 楽天の表記が「〜日頃」だった（日付は未確定）
+  salesDateApproximate: boolean
+  price: number
+  url: string
+  imageUrl: string
+}
+
+// configured が false のときは楽天のキーが無い環境で、from 以下は無く items は空
+export interface NewReleasesResult {
+  configured: boolean
+  from?: string
+  to?: string
+  fetchedAt?: string
+  // 期間内を読み切れなかった（一部だけ）
+  truncated: boolean
+  items: NewReleaseItem[]
+}
+
 export interface MangaRankingItem extends AniListItem {
   malRank?: number | null
   members?: number | null
