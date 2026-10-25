@@ -3,6 +3,7 @@ package record_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
@@ -245,5 +246,34 @@ func TestUsecase_Delete_NotFound(t *testing.T) {
 	err := u.Delete(context.Background(), 1, 2)
 	if !errors.Is(err, record.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// 入力の誤りは record.InputError で返すことを保証する。ハンドラはこれでだけメッセージを画面に出し、
+// それ以外（DB の失敗）は定型文にする（BACKLOG 10）。
+func TestUsecase_ValidationErrorsAreInputErrors(t *testing.T) {
+	u := record.NewUsecase(&fakeRepository{})
+
+	_, err := u.AddOrUpdateStatus(context.Background(), 1, domain.NewRecordInput{MediaType: "movie", Status: domain.StatusWant, Title: "X"})
+	var inputErr *record.InputError
+	if !errors.As(err, &inputErr) {
+		t.Fatalf("expected *record.InputError, got %T (%v)", err, err)
+	}
+	if !strings.Contains(inputErr.Error(), "invalid media type") {
+		t.Errorf("unexpected message: %q", inputErr.Error())
+	}
+}
+
+// リポジトリのエラーは InputError にしないことを保証する。InputError にすると DB のエラー文が画面に出る。
+func TestUsecase_RepositoryErrorsAreNotInputErrors(t *testing.T) {
+	repo := &fakeRepository{upsertFunc: func(context.Context, int64, domain.NewRecordInput) (*domain.Record, error) {
+		return nil, errors.New("upsert record: ERROR: ...")
+	}}
+	u := record.NewUsecase(repo)
+
+	_, err := u.AddOrUpdateStatus(context.Background(), 1, domain.NewRecordInput{MediaType: domain.MediaTypeManga, Status: domain.StatusWant, Title: "X"})
+	var inputErr *record.InputError
+	if err == nil || errors.As(err, &inputErr) {
+		t.Fatalf("expected a non-input error, got %v", err)
 	}
 }

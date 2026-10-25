@@ -3,12 +3,28 @@ package record
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 )
 
 // ErrNotFound は指定されたIDの記録が存在しない（または他ユーザーの記録である）ことを表す。
 var ErrNotFound = errors.New("record not found")
+
+// InputError は利用者が送った値が不正なことを表す。メッセージは画面に出してよい。
+//
+// これ以外のエラー（DB の失敗など）と区別するために型を分けた。区別しないと、ハンドラは
+// すべてを 400 とそのメッセージで返すしかなく、DB のエラー文（テーブル名・制約名）が画面に出る
+// （BACKLOG 10、2026-10-25 に実際に出た）。
+type InputError struct {
+	msg string
+}
+
+func (e *InputError) Error() string { return e.msg }
+
+func invalidf(format string, a ...any) error {
+	return &InputError{msg: fmt.Sprintf(format, a...)}
+}
 
 // Repository は Usecase が記録の永続化に必要とする操作を定義する。
 // 実装は internal/infrastructure/postgres が提供する。
