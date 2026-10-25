@@ -73,7 +73,7 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 | --- | --- |
 | `cmd/server/` | エントリポイント。DI の配線、マイグレーション実行、HTTP サーバーとスケジューラの起動・停止 |
 | `internal/domain/` | ドメインモデルと値オブジェクト（`Record`, `User`, `Status`, `MediaType`, `SortKey`）。他層に依存しない |
-| `internal/usecase/` | ユースケース層。`auth` / `record` / `search` / `nlsearch`（自然文検索）/ `home` / `translate` / `airing` / `housekeeping`（期限切れセッションの削除）/ `taxonomy`（AI 機能が使うジャンル・タグ一覧）と、横断で使う `cache` |
+| `internal/usecase/` | ユースケース層。`auth` / `record` / `search` / `nlsearch`（自然文検索）/ `home` / `translate` / `airing` / `housekeeping`（期限切れセッションの削除）/ `taxonomy`（AI 機能が使うジャンル・タグ一覧）/ `newreleases`（新刊）と、横断で使う `cache` |
 | `internal/handler/` | HTTP ハンドラ、ルーティング、静的ファイル配信、ヘルスチェック |
 | `internal/middleware/` | セッション Cookie による認証ミドルウェア |
 | `internal/scheduler/` | プロセス内の定期ジョブランナー |
@@ -81,6 +81,7 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 | `internal/anilist/` | AniList GraphQL クライアントとクエリ定義。トークンバケットでレート制御 |
 | `internal/jikan/` | Jikan (MyAnimeList) クライアント。最小リクエスト間隔でレート制御 |
 | `internal/claude/` | Claude API クライアント（AI 翻訳・自然文検索の条件づくり）と、プロセス全体の日次トークン上限 |
+| `internal/rakuten/` | 楽天ブックス書籍検索 API クライアント（新刊）。最小リクエスト間隔でレート制御 |
 | `internal/translate/` | MyMemory 翻訳クライアント（AI 翻訳のフォールバック）。文単位のチャンク分割を含む |
 | `migrations/` | `NNNN_name.up.sql` / `.down.sql` の組と `embed.FS` |
 | `frontend/` | React + Vite。`src/pages` / `src/components` / `src/context` / `src/hooks` / `src/lib` |

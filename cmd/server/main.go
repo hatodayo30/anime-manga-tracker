@@ -16,12 +16,14 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/infrastructure/postgres"
 	"github.com/hatodayo30/anime-manga-tracker/internal/jikan"
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
+	"github.com/hatodayo30/anime-manga-tracker/internal/rakuten"
 	"github.com/hatodayo30/anime-manga-tracker/internal/scheduler"
 	"github.com/hatodayo30/anime-manga-tracker/internal/translate"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/airing"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/home"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/housekeeping"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/newreleases"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/nlsearch"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/recommend"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/record"
@@ -118,6 +120,22 @@ func run() error {
 	recommendUsecase := recommend.NewUsecase(recordRepo, taxonomyUsecase, anilistClient, aiRecommender, time.Now)
 	recommendHandler := handler.NewRecommendHandler(recommendUsecase)
 
+	// 新刊（BACKLOG 11-b）。楽天のキーが揃っていなければ nil のインターフェースを渡し、API は「未設定」を返す。
+	// 楽天は applicationId と accessKey の両方が必須なので、片方だけでは呼べない。
+	var rakutenGateway newreleases.Gateway
+	switch {
+	case cfg.RakutenApplicationID != "" && cfg.RakutenAccessKey != "":
+		rakutenGateway = rakuten.NewClient(cfg.RakutenApplicationID, cfg.RakutenAccessKey)
+		log.Printf("rakuten: enabled")
+	case cfg.RakutenApplicationID != "" || cfg.RakutenAccessKey != "":
+		// 片方だけ入っているのは入れ忘れなので、黙って無効にせずログで分かるようにする
+		log.Printf("rakuten: disabled (set both RAKUTEN_APPLICATION_ID and RAKUTEN_ACCESS_KEY)")
+	default:
+		log.Printf("rakuten: disabled (RAKUTEN_APPLICATION_ID / RAKUTEN_ACCESS_KEY are not set)")
+	}
+	newReleasesUsecase := newreleases.NewUsecase(rakutenGateway, time.Now)
+	newReleasesHandler := handler.NewNewReleasesHandler(newReleasesUsecase)
+
 	healthHandler := handler.NewHealthHandler(pool)
 
 	e := handler.NewRouter(handler.Handlers{
@@ -133,6 +151,7 @@ func run() error {
 		WebDir:       "frontend/dist",
 		TrustProxy:   cfg.TrustProxy,
 		NLSearch:     nlsearchHandler,
+		NewReleases:  newReleasesHandler,
 	})
 
 	waitJobs := scheduler.New(
@@ -156,6 +175,14 @@ func run() error {
 			Name:     "housekeeping",
 			Interval: housekeeping.Interval,
 			Run:      housekeeping.NewUsecase(postgres.NewHousekeepingRepository(pool)).Run,
+		},
+		// 新刊の一覧を起動時に温め、以後も定期的に取り直す（BACKLOG 11-b）。冷えたキャッシュの取得は
+		// 楽天への十数本を 1 秒間隔で並べるので 20 秒近くかかり、利用者に肩代わりさせたくない。
+		// 楽天のキーが無ければ何もしない。AniList / Jikan は叩かない。
+		scheduler.Job{
+			Name:     "new-releases-warm",
+			Interval: newreleases.WarmInterval,
+			Run:      newReleasesUsecase.Warm,
 		},
 	).Start(ctx)
 

@@ -1,0 +1,253 @@
+package newreleases_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/hatodayo30/anime-manga-tracker/internal/rakuten"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/newreleases"
+)
+
+var jst = time.FixedZone("JST", 9*60*60)
+
+// fakeGateway は books を「発売日の新しい順」に並んだ全件とみなし、30 件ずつのページで返す。
+// pageCount は楽天と同じく 100 で頭打ちにする。呼ばれたページを記録する。
+type fakeGateway struct {
+	books []rakuten.Book
+	err   error
+
+	pages []int
+}
+
+func (f *fakeGateway) LatestComics(_ context.Context, page int) (*rakuten.Page, error) {
+	f.pages = append(f.pages, page)
+	if f.err != nil {
+		return nil, f.err
+	}
+	pageCount := min((len(f.books)+rakuten.HitsPerPage-1)/rakuten.HitsPerPage, rakuten.MaxPage)
+	start := (page - 1) * rakuten.HitsPerPage
+	if start >= len(f.books) {
+		return &rakuten.Page{PageCount: pageCount, Items: []rakuten.Book{}}, nil
+	}
+	end := min(start+rakuten.HitsPerPage, len(f.books))
+	return &rakuten.Page{PageCount: pageCount, Items: f.books[start:end]}, nil
+}
+
+// book は ISBN を連番で振った本を作る。
+func book(n int, salesDate string) rakuten.Book {
+	return rakuten.Book{Title: fmt.Sprintf("本 %d", n), ISBN: fmt.Sprintf("978%010d", n), SalesDate: salesDate}
+}
+
+// daily は from から 1 日ずつさかのぼり、各日に perDay 冊ずつ並べる（発売日の新しい順）。
+func daily(next *int, from time.Time, days, perDay int) []rakuten.Book {
+	var out []rakuten.Book
+	for d := range days {
+		date := from.AddDate(0, 0, -d)
+		for range perDay {
+			*next++
+			out = append(out, book(*next, fmt.Sprintf("%d年%02d月%02d日", date.Year(), date.Month(), date.Day())))
+		}
+	}
+	return out
+}
+
+func fixedNow(t time.Time) func() time.Time { return func() time.Time { return t } }
+
+// 2026-10-25 10:00 JST
+var now = time.Date(2026, 10, 25, 10, 0, 0, 0, jst)
+
+// キーが無い（gateway が nil）ときはエラーにせず Configured=false と空の items を返すことを保証する。
+// 画面は「未設定」を出すので、items は null でなく空配列にする。
+func TestComics_NotConfigured(t *testing.T) {
+	u := newreleases.NewUsecase(nil, fixedNow(now))
+
+	got, err := u.Comics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Configured || got.Items == nil || len(got.Items) != 0 {
+		t.Errorf("got %+v, want Configured=false and empty items", got)
+	}
+	if err := u.Warm(context.Background()); err != nil {
+		t.Errorf("Warm should be a no-op without a gateway, got %v", err)
+	}
+}
+
+// 今日を含む直近 7 日に発売されたものだけを返し、予約（未来）と 8 日以上前のものは除くことを保証する。
+// 曖昧な発売日のうち「日頃」は使って印を付け、日の無いものや「以降」は捨てる。
+func TestComics_FiltersWindowAndAmbiguousDates(t *testing.T) {
+	n := 0
+	var books []rakuten.Book
+	// 先頭は日の決まっていない予約と、来月の予約
+	books = append(books, book(1001, "2027年01月"), book(1002, "2026年12月上旬"))
+	books = append(books, daily(&n, time.Date(2026, 11, 30, 0, 0, 0, 0, jst), 30, 3)...)
+	books = append(books, daily(&n, time.Date(2026, 10, 31, 0, 0, 0, 0, jst), 6, 2)...) // 10/26〜10/31（未来）
+	books = append(books, daily(&n, now, 7, 2)...)                                      // 10/19〜10/25（期間内）
+	books = append(books,
+		book(2001, "2026年10月19日頃"),  // 期間内・おおよそ
+		book(2002, "2026年10月20日以降"), // 下限だけなので捨てる
+		book(2003, "2026年10月中旬"),    // 日が無いので捨てる
+		book(2004, "2026年02月30日"),   // 存在しない日付なので捨てる
+	)
+	books = append(books, daily(&n, time.Date(2026, 10, 18, 0, 0, 0, 0, jst), 20, 3)...) // 期間より前
+
+	u := newreleases.NewUsecase(&fakeGateway{books: books}, fixedNow(now))
+	got, err := u.Comics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !got.Configured || got.From != "2026-10-19" || got.To != "2026-10-25" || got.Truncated {
+		t.Errorf("got Configured=%v From=%q To=%q Truncated=%v", got.Configured, got.From, got.To, got.Truncated)
+	}
+	if len(got.Items) != 7*2+1 {
+		t.Fatalf("got %d items, want %d: %+v", len(got.Items), 7*2+1, got.Items)
+	}
+	if got.Items[0].SalesDate != "2026-10-25" {
+		t.Errorf("first item date = %q, want newest first", got.Items[0].SalesDate)
+	}
+	last := got.Items[len(got.Items)-1]
+	if last.ISBN != book(2001, "").ISBN || last.SalesDate != "2026-10-19" || !last.SalesDateApproximate {
+		t.Errorf("last item = %+v, want the approximate 10/19 book", last)
+	}
+	for _, it := range got.Items[:len(got.Items)-1] {
+		if it.SalesDateApproximate {
+			t.Errorf("item %+v should not be approximate", it)
+		}
+	}
+}
+
+// 予約が何十ページも並んでいても、先頭から順に読まず二分探索で期間に届くことを保証する。
+// 楽天は上限が非公開で 429 を返すので、1 回の取り直しのリクエスト数を十数本に抑える。
+func TestComics_BinarySearchKeepsRequestsSmall(t *testing.T) {
+	n := 0
+	var books []rakuten.Book
+	// 未来の予約だけで 80 ページ（2,400 冊）
+	books = append(books, daily(&n, time.Date(2027, 2, 28, 0, 0, 0, 0, jst), 120, 20)...)
+	books = append(books, daily(&n, now, 7, 5)...)
+	books = append(books, daily(&n, now.AddDate(0, 0, -7), 30, 30)...)
+	gw := &fakeGateway{books: books}
+
+	u := newreleases.NewUsecase(gw, fixedNow(now))
+	got, err := u.Comics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Items) != 7*5 || got.Truncated {
+		t.Errorf("got %d items (truncated=%v), want %d", len(got.Items), got.Truncated, 7*5)
+	}
+	if len(gw.pages) > 12 {
+		t.Errorf("made %d requests (%v), want at most 12", len(gw.pages), gw.pages)
+	}
+	seen := map[int]bool{}
+	for _, p := range gw.pages {
+		if seen[p] {
+			t.Errorf("page %d was requested twice (%v)", p, gw.pages)
+		}
+		seen[p] = true
+	}
+}
+
+// 期間内の件数が読み進めの上限（10 ページ）を超えたら、そこで止めて Truncated を立てることを保証する。
+func TestComics_TruncatesWhenWindowIsTooLarge(t *testing.T) {
+	n := 0
+	books := daily(&n, now, 7, 60) // 期間内だけで 420 冊 = 14 ページ
+	books = append(books, daily(&n, now.AddDate(0, 0, -7), 3, 30)...)
+
+	u := newreleases.NewUsecase(&fakeGateway{books: books}, fixedNow(now))
+	got, err := u.Comics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.Truncated || len(got.Items) != 300 {
+		t.Errorf("got %d items (truncated=%v), want 300 and truncated", len(got.Items), got.Truncated)
+	}
+}
+
+// 予約だけで page の上限（100 ページ）を埋めて期間に届かないときは、空の一覧に Truncated を立てる
+// ことを保証する。「新刊は 0 冊」と区別できないと、画面が黙って空になる。
+func TestComics_WindowBeyondPageLimit(t *testing.T) {
+	n := 0
+	books := daily(&n, time.Date(2027, 6, 30, 0, 0, 0, 0, jst), 200, 20) // 4,000 冊 > 3,000 冊
+
+	u := newreleases.NewUsecase(&fakeGateway{books: books}, fixedNow(now))
+	got, err := u.Comics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got.Truncated || len(got.Items) != 0 {
+		t.Errorf("got %d items (truncated=%v), want empty and truncated", len(got.Items), got.Truncated)
+	}
+}
+
+// 結果の末尾まで読み切って期間内が 0 冊なら、Truncated は立てないことを保証する。
+func TestComics_EmptyResultIsNotTruncated(t *testing.T) {
+	u := newreleases.NewUsecase(&fakeGateway{}, fixedNow(now))
+	got, err := u.Comics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Truncated || len(got.Items) != 0 || got.Items == nil {
+		t.Errorf("got %+v, want empty non-truncated", got)
+	}
+}
+
+// 「今日」は JST で決めることを保証する。UTC の 10/24 15:30 は JST の 10/25 00:30。
+func TestComics_TodayIsJST(t *testing.T) {
+	u := newreleases.NewUsecase(&fakeGateway{}, fixedNow(time.Date(2026, 10, 24, 15, 30, 0, 0, time.UTC)))
+	got, err := u.Comics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.To != "2026-10-25" || got.From != "2026-10-19" {
+		t.Errorf("From=%q To=%q, want 2026-10-19 .. 2026-10-25", got.From, got.To)
+	}
+}
+
+// 読んでいる間に予約が増えてページの境目がずれ、同じ本が 2 ページに出ても 1 冊にまとめることを保証する。
+func TestComics_DeduplicatesAcrossPages(t *testing.T) {
+	n := 0
+	books := daily(&n, now, 1, 30)
+	books = append(books, books[29]) // 2 ページ目の先頭に 1 ページ目の末尾が再び出る
+	books = append(books, daily(&n, now.AddDate(0, 0, -7), 1, 5)...)
+
+	u := newreleases.NewUsecase(&fakeGateway{books: books}, fixedNow(now))
+	got, err := u.Comics(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Items) != 30 {
+		t.Errorf("got %d items, want 30", len(got.Items))
+	}
+}
+
+// 2 回目以降はキャッシュから返し、利用者が開くたびに楽天を叩かないことを保証する。
+func TestComics_Cached(t *testing.T) {
+	n := 0
+	gw := &fakeGateway{books: daily(&n, now, 10, 2)}
+	u := newreleases.NewUsecase(gw, fixedNow(now))
+
+	if _, err := u.Comics(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	calls := len(gw.pages)
+	if _, err := u.Comics(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(gw.pages) != calls {
+		t.Errorf("second call made %d more requests, want 0", len(gw.pages)-calls)
+	}
+}
+
+// 楽天の失敗はエラーとして返すことを保証する（途中までの一覧を「新刊はこれだけ」として配らない）。
+func TestComics_GatewayError(t *testing.T) {
+	wantErr := errors.New("429")
+	u := newreleases.NewUsecase(&fakeGateway{err: wantErr}, fixedNow(now))
+
+	if _, err := u.Comics(context.Background()); !errors.Is(err, wantErr) {
+		t.Errorf("got error %v, want %v", err, wantErr)
+	}
+}

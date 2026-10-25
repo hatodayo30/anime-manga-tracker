@@ -745,6 +745,53 @@ aws logs tail /ecs/anime-manga-tracker --since 5m | grep 'ai translate'
 - **`environment` には書かない。** タスク定義は IAM さえあれば誰でも読める（Step 4 と同じ理由）
 - 日次上限を変えたいときは `environment` に `CLAUDE_DAILY_TOKEN_LIMIT` を足す（秘密ではない）
 
+### 楽天ブックスのキーを入れる（一度だけ）
+
+`RAKUTEN_APPLICATION_ID` / `RAKUTEN_ACCESS_KEY` が無くてもアプリは動く（起動ログに `rakuten: disabled` が出て、
+`/api/new-releases/comics` は `{"configured": false, "items": []}` を返す）。「新着」タブの新刊を出すときに
+1 回だけ行う（BACKLOG 11-b）。
+
+アプリ ID とアクセスキーは [楽天ウェブサービス](https://webservice.rakuten.co.jp/) でアプリを登録して発行する。
+**2 つとも入れる。** 片方だけだと楽天を呼べないので、起動ログに
+`rakuten: disabled (set both RAKUTEN_APPLICATION_ID and RAKUTEN_ACCESS_KEY)` が出て無効のままになる。
+
+```bash
+# 履歴にキーを残さないよう、ファイル経由で入れる。秘密なのはアクセスキーの方だが、
+# 手順を 1 つにするためアプリ ID も SecureString にしておく
+aws ssm put-parameter --name /amt/prod/RAKUTEN_APPLICATION_ID --type SecureString \
+  --value "$(cat /tmp/rakuten-app-id.txt)"
+aws ssm put-parameter --name /amt/prod/RAKUTEN_ACCESS_KEY --type SecureString \
+  --value "$(cat /tmp/rakuten-access-key.txt)"
+rm /tmp/rakuten-app-id.txt /tmp/rakuten-access-key.txt
+
+# タスク定義の secrets に足して再登録する（jq なので何度流しても重複しない）
+aws ecs describe-task-definition --task-definition anime-manga-tracker \
+  --query 'taskDefinition' --output json \
+  | jq --arg prefix "arn:aws:ssm:${AWS_REGION}:${ACCOUNT_ID}:parameter/amt/prod/" '
+      del(.taskDefinitionArn,.revision,.status,.requiresAttributes,
+          .compatibilities,.registeredAt,.registeredBy,.deregisteredAt)
+      | .containerDefinitions[0].secrets |=
+          ( map(select(.name != "RAKUTEN_APPLICATION_ID" and .name != "RAKUTEN_ACCESS_KEY"))
+            + [{name:"RAKUTEN_APPLICATION_ID",valueFrom:($prefix + "RAKUTEN_APPLICATION_ID")},
+               {name:"RAKUTEN_ACCESS_KEY",valueFrom:($prefix + "RAKUTEN_ACCESS_KEY")}] )
+    ' > /tmp/amt-taskdef.json
+jq '.containerDefinitions[0].secrets' /tmp/amt-taskdef.json
+aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
+
+aws ecs update-service --cluster amt-cluster --service amt-service \
+  --task-definition anime-manga-tracker
+aws ecs wait services-stable --cluster amt-cluster --services amt-service
+aws logs tail /ecs/anime-manga-tracker --since 5m | grep -E 'rakuten|new-releases-warm'
+# rakuten: enabled
+# scheduler: new-releases-warm done in 15.2s
+```
+
+- **IAM の変更は要らない。** Step 6-1 のインラインポリシーが `parameter/amt/prod/*` を許可している
+- **`environment` には書かない。** タスク定義は IAM さえあれば誰でも読める（Step 4 と同じ理由）
+- `new-releases-warm` が `failed` になっていたら、エラー文の楽天のエラーコード（`wrong_parameter` など）を見る。
+  キーを入れて最初の 1 回は、実際の応答の形（`items` の綴り・`salesDate` の表記）が想定どおりかも確かめる
+  （BACKLOG 11-b「残っている穴」）
+
 ### 実行中のコンテナに入る（ECS Exec）
 
 ```bash
