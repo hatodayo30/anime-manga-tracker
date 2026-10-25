@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
-import { STATUS_LABELS, activateOnKey, colorForTitle, formatScore, translateGenre, translateRelation, unitFor, type MediaKind, type Status } from '../lib/util'
+import { MAX_PROGRESS, STATUS_LABELS, activateOnKey, colorForTitle, formatScore, translateGenre, translateRelation, unitFor, type MediaKind, type Status } from '../lib/util'
 import type { LibraryRecord, RelatedWork } from '../types'
 import { Thumb } from './Thumb'
 import type { OpenWorkModalOptions, WorkModalItem } from './WorkModalContext'
@@ -231,7 +231,8 @@ export function WorkModal({ item, mediaType, record, onChange, onClose, openRela
     mediaType === 'anime' && freshInfo?.airingStatus === 'RELEASING' && freshInfo?.nextEpisode != null
       ? freshInfo.nextEpisode - 1
       : null
-  const progressCap = airingEp != null ? airingEp : total
+  // 総数も放送済みの話数も分からないときは、MAX_PROGRESS で止める（ありえない数を保存させない）
+  const progressCap = airingEp ?? total ?? MAX_PROGRESS
 
   const scoreLabel = formatScore(item.score)
   const metaParts = [mediaType === 'anime' ? 'アニメ' : '漫画', total ? `全${total}${unit}` : '連載中']

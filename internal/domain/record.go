@@ -39,6 +39,11 @@ func (s SortKey) Valid() bool {
 	return false
 }
 
+// MaxProgress は進捗（Progress）と総数（Total）として受け付ける上限。アニメの話数でも漫画の巻数でも、
+// 実在する作品はこれに届かない（長寿アニメでも数千話、漫画は 200 巻台）。総数が分からない連載中の作品では
+// 上限が掛からず、手入力で 100000000 巻のような値が保存できてしまったため（2026-10-25）。
+const MaxProgress = 9999
+
 // Record は1作品分の記録（AniListの作品情報 + ユーザーのステータス）を表す。
 // Progress / Total の単位は MediaType で決まる（アニメ=話数、漫画=巻数）。
 type Record struct {

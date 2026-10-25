@@ -46,6 +46,9 @@ func (u *Usecase) AddOrUpdateStatus(ctx context.Context, userID int64, in domain
 	if in.Title == "" {
 		return nil, invalidf("title is required")
 	}
+	if in.Total != nil && *in.Total > domain.MaxProgress {
+		return nil, invalidf("total must be <= %d", domain.MaxProgress)
+	}
 	return u.repo.Upsert(ctx, userID, in)
 }
 
@@ -54,11 +57,11 @@ func (u *Usecase) UpdateProgressOrStatus(ctx context.Context, userID, id int64, 
 	if in.Status != nil && !in.Status.Valid() {
 		return nil, invalidf("invalid status: %s", *in.Status)
 	}
-	if in.Progress != nil && *in.Progress < 0 {
-		return nil, invalidf("progress must be >= 0")
+	if in.Progress != nil && (*in.Progress < 0 || *in.Progress > domain.MaxProgress) {
+		return nil, invalidf("progress must be between 0 and %d", domain.MaxProgress)
 	}
-	if in.Total != nil && *in.Total < 0 {
-		return nil, invalidf("total must be >= 0")
+	if in.Total != nil && (*in.Total < 0 || *in.Total > domain.MaxProgress) {
+		return nil, invalidf("total must be between 0 and %d", domain.MaxProgress)
 	}
 	if in.Rating != nil && (*in.Rating < 0 || *in.Rating > 5) {
 		return nil, invalidf("rating must be between 0 and 5")

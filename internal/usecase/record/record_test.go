@@ -277,3 +277,30 @@ func TestUsecase_RepositoryErrorsAreNotInputErrors(t *testing.T) {
 		t.Fatalf("expected a non-input error, got %v", err)
 	}
 }
+
+// 進捗と総数は domain.MaxProgress を超える値を受け付けないことを保証する。総数が分からない作品では
+// 画面の上限が掛からず、手入力で 100000000 巻が保存できた（2026-10-25）。
+func TestUsecase_UpdateProgressOrStatus_RejectsTooLargeProgress(t *testing.T) {
+	repo := &fakeRepository{}
+	u := record.NewUsecase(repo)
+
+	tooLarge := domain.MaxProgress + 1
+	for _, in := range []domain.UpdateRecordInput{{Progress: &tooLarge}, {Total: &tooLarge}} {
+		_, err := u.UpdateProgressOrStatus(context.Background(), 1, 1, in)
+		var inputErr *record.InputError
+		if !errors.As(err, &inputErr) {
+			t.Errorf("input %+v: expected InputError, got %v", in, err)
+		}
+	}
+	if repo.called {
+		t.Error("repository should not be called when validation fails")
+	}
+
+	ok := domain.MaxProgress
+	repo.updateFunc = func(context.Context, int64, int64, domain.UpdateRecordInput) (*domain.Record, error) {
+		return &domain.Record{}, nil
+	}
+	if _, err := u.UpdateProgressOrStatus(context.Background(), 1, 1, domain.UpdateRecordInput{Progress: &ok}); err != nil {
+		t.Errorf("expected the maximum itself to be accepted, got %v", err)
+	}
+}
