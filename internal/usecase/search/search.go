@@ -16,6 +16,11 @@ import (
 // 検索してマージする。AniListには無い/ヒットしにくい作品を拾うためのフォールバック。
 const jikanFallbackThreshold = 3
 
+// jikanFallbackTimeout は Jikan での補完に待つ時間。補完は AniList の結果に足すおまけなので、検索全体を遅らせない。
+// 2026-10-25 に Jikan へ接続できなくなったとき、補完が HTTP クライアントのタイムアウト（10 秒）まで待ち、
+// 結果が 3 件以下の検索がすべて 10 秒かかった。Jikan が普段返す時間（1 秒前後）に余裕を持たせた値。
+const jikanFallbackTimeout = 3 * time.Second
+
 // recommendCacheTTL はおすすめ結果のキャッシュ保持時間。ユーザーのライブラリ変化に追従してほしいので
 // 短めにしておく。
 const recommendCacheTTL = 3 * time.Minute
@@ -58,6 +63,9 @@ func (u *Usecase) Search(ctx context.Context, mediaType domain.MediaType, query 
 // withJikanFallback はAniListの検索結果にJikanの検索結果を足し、タイトルの重複を除いて
 // 人気順にまとめる。Jikan側が失敗してもAniListの結果はそのまま返す。
 func (u *Usecase) withJikanFallback(ctx context.Context, mediaType domain.MediaType, query string, aniListResults []anilist.SearchResult) []anilist.SearchResult {
+	ctx, cancel := context.WithTimeout(ctx, jikanFallbackTimeout)
+	defer cancel()
+
 	var jikanResults []anilist.SearchResult
 	var err error
 	if mediaType == domain.MediaTypeManga {
