@@ -27,6 +27,7 @@ const defaultEndpoint = "https://openapi.rakuten.co.jp/services/api/BooksBook/Se
 // 直近の発売日に届かなくなりかけたため（BACKLOG 11-b）。ジャンルで絞れば 1 本あたりの予約が減る。
 // 判型（size=9 がコミック）で絞るのはやめた。「文庫」のジャンルの漫画は判型が文庫なので落ちる。
 const (
+	GenreComic   = "001001"    // 漫画（コミック）全体
 	GenreShonen  = "001001001" // 少年
 	GenreShojo   = "001001002" // 少女
 	GenreSeinen  = "001001003" // 青年
@@ -201,6 +202,27 @@ func (c *Client) LatestComics(ctx context.Context, genreID string, page int) (*P
 	if page < 1 || page > MaxPage {
 		return nil, fmt.Errorf("rakuten: page must be between 1 and %d (got %d)", MaxPage, page)
 	}
+	return c.search(ctx, url.Values{
+		"booksGenreId": {genreID},
+		"page":         {strconv.Itoa(page)},
+	})
+}
+
+// ComicsByTitle は書名に title を含むコミック（漫画のジャンル全体）を、発売日の新しい順に並べた結果の
+// page ページ目（30 件）を返す。既刊の巻数を数えるのに使う（usecase/volumes）。先頭には予約が来る。
+func (c *Client) ComicsByTitle(ctx context.Context, title string, page int) (*Page, error) {
+	if page < 1 || page > MaxPage {
+		return nil, fmt.Errorf("rakuten: page must be between 1 and %d (got %d)", MaxPage, page)
+	}
+	return c.search(ctx, url.Values{
+		"booksGenreId": {GenreComic},
+		"title":        {title},
+		"page":         {strconv.Itoa(page)},
+	})
+}
+
+// search は共通の条件（コミックの並び・件数・在庫切れを含む）に extra を足して書籍検索を 1 回呼ぶ。
+func (c *Client) search(ctx context.Context, extra url.Values) (*Page, error) {
 	if err := c.throttle(ctx); err != nil {
 		return nil, err
 	}
@@ -209,14 +231,15 @@ func (c *Client) LatestComics(ctx context.Context, genreID string, page int) (*P
 		"applicationId": {c.applicationID},
 		"format":        {"json"},
 		"formatVersion": {"2"},
-		"booksGenreId":  {genreID},
 		"sort":          {"-releaseDate"},
 		"hits":          {strconv.Itoa(HitsPerPage)},
-		"page":          {strconv.Itoa(page)},
 		// 既定（0）は在庫切れを除く。発売直後に売り切れた巻こそ新刊の欄に出したいので含める
 		"outOfStockFlag": {"1"},
 		// elements で項目を絞ると応答は軽くなるが、pageCount のような最上位の項目まで落ちるのかが
 		// 文書から読み取れない。総ページ数は二分探索に要るので、絞らずに受け取る
+	}
+	for k, v := range extra {
+		q[k] = v
 	}
 	if c.affiliateID != "" {
 		q.Set("affiliateId", c.affiliateID)

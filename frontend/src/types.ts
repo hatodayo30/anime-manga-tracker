@@ -78,6 +78,16 @@ export interface NewReleasesResult {
   items: NewReleaseItem[]
 }
 
+// GET /api/books/latest-volume（漫画の既刊の巻数、楽天ブックス）。表示にだけ使い、記録には保存しない
+export interface LatestVolumeResult {
+  configured: boolean
+  found: boolean
+  latestVolume?: number
+  salesDate?: string
+  // 楽天に書名が 1 冊も無かった（始まったばかりで単行本がまだ無いことが多い）
+  noBooks?: boolean
+}
+
 export interface MangaRankingItem extends AniListItem {
   malRank?: number | null
   members?: number | null

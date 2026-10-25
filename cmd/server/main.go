@@ -30,6 +30,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/search"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/taxonomy"
 	translateusecase "github.com/hatodayo30/anime-manga-tracker/internal/usecase/translate"
+	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/volumes"
 	"github.com/hatodayo30/anime-manga-tracker/migrations"
 )
 
@@ -122,10 +123,11 @@ func run() error {
 
 	// 新刊（BACKLOG 11-b）。楽天のキーが揃っていなければ nil のインターフェースを渡し、API は「未設定」を返す。
 	// 楽天は applicationId と accessKey の両方が必須なので、片方だけでは呼べない。
-	var rakutenGateway newreleases.Gateway
+	// クライアントは新刊と既刊の巻数で 1 つを共有する。リクエストの間隔（1.5 秒）を全体で守るため
+	var rakutenClient *rakuten.Client
 	switch {
 	case cfg.RakutenApplicationID != "" && cfg.RakutenAccessKey != "":
-		rakutenGateway = rakuten.NewClient(cfg.RakutenApplicationID, cfg.RakutenAccessKey, cfg.RakutenReferer,
+		rakutenClient = rakuten.NewClient(cfg.RakutenApplicationID, cfg.RakutenAccessKey, cfg.RakutenReferer,
 			rakuten.WithAffiliateID(cfg.RakutenAffiliateID))
 		if cfg.RakutenAffiliateID == "" {
 			log.Printf("rakuten: enabled (RAKUTEN_AFFILIATE_ID is not set: product links are not affiliate links)")
@@ -138,8 +140,17 @@ func run() error {
 	default:
 		log.Printf("rakuten: disabled (RAKUTEN_APPLICATION_ID / RAKUTEN_ACCESS_KEY are not set)")
 	}
+	// *rakuten.Client の nil をそのまま渡すとインターフェースとしては nil にならないので、分岐で渡し分ける
+	var rakutenGateway newreleases.Gateway
+	var volumesGateway volumes.Gateway
+	if rakutenClient != nil {
+		rakutenGateway = rakutenClient
+		volumesGateway = rakutenClient
+	}
 	newReleasesUsecase := newreleases.NewUsecase(rakutenGateway, time.Now)
 	newReleasesHandler := handler.NewNewReleasesHandler(newReleasesUsecase)
+	// 漫画の既刊の巻数（BACKLOG 11-c）
+	volumesHandler := handler.NewVolumesHandler(volumes.NewUsecase(volumesGateway, time.Now))
 
 	healthHandler := handler.NewHealthHandler(pool)
 
@@ -157,6 +168,7 @@ func run() error {
 		TrustProxy:   cfg.TrustProxy,
 		NLSearch:     nlsearchHandler,
 		NewReleases:  newReleasesHandler,
+		Volumes:      volumesHandler,
 	})
 
 	waitJobs := scheduler.New(
