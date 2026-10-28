@@ -54,3 +54,41 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*auth.U
 	}
 	return &u, nil
 }
+
+func (r *UserRepository) PasswordHash(ctx context.Context, userID int64) (string, error) {
+	var hash string
+	err := r.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&hash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", auth.ErrNotFound
+		}
+		return "", fmt.Errorf("find password hash: %w", err)
+	}
+	return hash, nil
+}
+
+// UpdatePassword は users と sessions の 2 つの表を触るが、SessionRepository ではなくここに置く。
+// パスワードの差し替えと古いセッションの削除は 1 つのトランザクションでなければならず、
+// リポジトリをまたぐとトランザクションを usecase に持ち出すことになるため。
+func (r *UserRepository) UpdatePassword(ctx context.Context, userID int64, passwordHash, keepToken string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin update password: %w", err)
+	}
+	defer tx.Rollback(ctx) // Commit が済んでいれば何もしない
+
+	tag, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2 WHERE id = $1`, userID, passwordHash)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return auth.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND token <> $2`, userID, keepToken); err != nil {
+		return fmt.Errorf("delete other sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit update password: %w", err)
+	}
+	return nil
+}

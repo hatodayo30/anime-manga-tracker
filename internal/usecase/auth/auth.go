@@ -18,6 +18,17 @@ import (
 
 var ErrInvalidCredentials = errors.New("invalid email or password")
 
+// ErrWrongCurrentPassword はパスワード変更で、確認のために入力された現在のパスワードが違うことを表す。
+// ErrInvalidCredentials と分けるのは、ログイン済みの利用者に 401 を返すとフロントが
+// セッション切れと区別できず、ログイン画面へ送ってしまうため（ハンドラは 403 にする）。
+var ErrWrongCurrentPassword = errors.New("current password is incorrect")
+
+// InputError は利用者の入力が条件を満たさないことを表す。ハンドラはこれを 400 にし、
+// それ以外（DB の失敗など）は 500 にする。メッセージはそのまま画面に出る。
+type InputError struct{ msg string }
+
+func (e *InputError) Error() string { return e.msg }
+
 const SessionTTL = 30 * 24 * time.Hour
 
 // maxPasswordBytes は bcrypt が受け付けるパスワードの上限（バイト数）。これを超えると
@@ -62,11 +73,8 @@ func (s *Service) SignUp(ctx context.Context, email, password string) (*domain.U
 	if email == "" || !strings.Contains(email, "@") {
 		return nil, "", time.Time{}, fmt.Errorf("invalid email")
 	}
-	if len(password) < 8 {
-		return nil, "", time.Time{}, fmt.Errorf("password must be at least 8 characters")
-	}
-	if len(password) > maxPasswordBytes {
-		return nil, "", time.Time{}, fmt.Errorf("password must be at most %d bytes (a Japanese character counts as 3)", maxPasswordBytes)
+	if err := validatePassword(password); err != nil {
+		return nil, "", time.Time{}, err
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -115,6 +123,38 @@ func (s *Service) Login(ctx context.Context, email, password string) (*domain.Us
 	return &userWithHash.User, token, expiresAt, nil
 }
 
+// ChangePassword は現在のパスワードを確かめてから新しいパスワードに差し替え、
+// keepToken（いま使っているセッション）以外のセッションをすべて消す。
+//
+// 他の端末のセッションを消すのは、パスワードを変える一番の理由が「漏れたかもしれない」だから。
+// 残すと、盗んだパスワードでログインした相手がそのまま使い続けられる。ボタンとしての
+// 「全端末からログアウト」はやらないと決めた（BACKLOG 4-d）が、変更に伴って消すのはその判断と別。
+// いまの端末まで消すと、変更した本人がすぐにログインし直すことになるので残す。
+//
+// 現在のパスワードを求めるのは、開いたままの端末やセッションを盗んだ相手が、本人を締め出せないようにするため。
+func (s *Service) ChangePassword(ctx context.Context, userID int64, keepToken, currentPassword, newPassword string) error {
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
+	if newPassword == currentPassword {
+		return &InputError{"new password must be different from the current one"}
+	}
+
+	hash, err := s.users.PasswordHash(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(currentPassword)); err != nil {
+		return ErrWrongCurrentPassword
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	return s.users.UpdatePassword(ctx, userID, string(newHash), keepToken)
+}
+
 func (s *Service) Logout(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
@@ -148,6 +188,17 @@ func generateToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// validatePassword は SignUp と ChangePassword で共通のパスワードの条件を確かめる。
+func validatePassword(password string) error {
+	if len(password) < 8 {
+		return &InputError{"password must be at least 8 characters"}
+	}
+	if len(password) > maxPasswordBytes {
+		return &InputError{fmt.Sprintf("password must be at most %d bytes (a Japanese character counts as 3)", maxPasswordBytes)}
+	}
+	return nil
 }
 
 func normalizeEmail(email string) string {

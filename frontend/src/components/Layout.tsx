@@ -73,18 +73,27 @@ const NAV_ITEMS = [
   },
 ]
 
+const ACCOUNT_ICON = (
+  <svg width="17" height="17" viewBox="0 0 256 256" fill="none" stroke="currentColor" strokeWidth="16">
+    <circle cx="128" cy="96" r="44" />
+    <path d="M40 216c12-40 48-64 88-64s76 24 88 64" strokeLinecap="round" />
+  </svg>
+)
+
 function AuthSlot() {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   if (user) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div className="text-muted" style={{ fontSize: 11, wordBreak: 'break-all' }}>
-          {user.email}
-        </div>
-        <button className="btn btn-secondary" style={{ width: '100%', fontSize: 12 }} onClick={() => logout()}>
-          ログアウト
-        </button>
-      </div>
+      <NavLink to="/account" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+        {ACCOUNT_ICON}
+        {/* メールアドレスだけだと押せる場所に見えないので、行き先を名前で書き、アドレスは下に小さく添える */}
+        <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          アカウント設定
+          <span className="text-muted" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {user.email}
+          </span>
+        </span>
+      </NavLink>
     )
   }
   return (
@@ -124,12 +133,19 @@ export function Layout({ children }: { children: ReactNode }) {
           <br />
           ひとつの記録に。
         </div>
-        <div style={{ padding: '0 10px', marginTop: 'var(--space-3)' }}>
+        <div style={{ marginTop: 'var(--space-3)' }}>
           <AuthSlot />
         </div>
       </nav>
 
       <main className="main has-bottom-nav">
+        {/* スマホ幅ではサイドバーが隠れるので、アカウント画面（ログアウトもここ）への入口を上に置く。
+            下のナビは 6 項目で埋まっているので足さない */}
+        <div className="mobile-topbar">
+          <NavLink to="/account" className="btn btn-icon btn-secondary" aria-label="アカウント設定">
+            {ACCOUNT_ICON}
+          </NavLink>
+        </div>
         <div className="screen">{children}</div>
       </main>
 

@@ -176,6 +176,9 @@ func NewRouter(h Handlers) *echo.Echo {
 	// 別々にすると、交互に叩くだけで枠が倍になる。
 	e.POST("/api/auth/signup", h.Auth.SignUp, publicAPILimit, loginLimit)
 	e.POST("/api/auth/login", h.Auth.Login, publicAPILimit, loginLimit)
+	// パスワード変更も 1 回ごとに bcrypt を 2 回回し、現在のパスワードの総当たりにも使えるので、
+	// login と同じ枠を共有する。RequireUser の後ろに置き、未ログインの 401 では枠を減らさない
+	e.POST("/api/auth/password", h.Auth.ChangePassword, publicAPILimit, h.RequireUser, loginLimit)
 	e.POST("/api/auth/logout", h.Auth.Logout, publicAPILimit)
 	e.GET("/api/auth/me", h.Auth.Me, publicAPILimit)
 
