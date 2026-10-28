@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { OnboardingModal } from '../components/OnboardingModal'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
+import { hasSeenOnboarding } from '../lib/onboarding'
 import { safeNextPath } from '../lib/safeNextPath'
 
 const COPY = {
@@ -32,6 +34,8 @@ export function AuthFormPage({ mode }: { mode: 'login' | 'signup' }) {
   const navigate = useNavigate()
   const location = useLocation()
   const copy = COPY[mode]
+  // 初期値で 1 回だけ判定する。モーダルが表示時に「見た」を保存するので、描画のたびに読むと開いた直後に消える
+  const [showOnboarding, setShowOnboarding] = useState(() => mode === 'login' && !hasSeenOnboarding())
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -106,6 +110,19 @@ export function AuthFormPage({ mode }: { mode: 'login' | 'signup' }) {
           {copy.switchText} <Link to={copy.switchTo}>{copy.switchLabel}</Link>
         </p>
       </div>
+
+      {showOnboarding && (
+        <OnboardingModal
+          onClose={() => setShowOnboarding(false)}
+          // /login と /signup は同じ位置の AuthFormPage なので、遷移してもコンポーネントは作り直されず
+          // showOnboarding が残る。先に閉じないと、URL だけ変わってモーダルが新規登録画面を覆ったままになる。
+          // ?next= は引き継ぎ、登録後に元々開こうとしていた画面へ戻れるようにする
+          onStart={() => {
+            setShowOnboarding(false)
+            navigate({ pathname: '/signup', search: location.search })
+          }}
+        />
+      )}
     </div>
   )
 }
