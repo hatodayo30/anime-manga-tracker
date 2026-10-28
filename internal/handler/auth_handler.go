@@ -65,6 +65,42 @@ func (h *AuthHandler) Login(c echo.Context) error {
 	return c.JSON(http.StatusOK, user)
 }
 
+type changePasswordInput struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+// ChangePassword handles POST /api/auth/password（RequireUser 配下）。
+// いまのセッションは残すので、Cookie は書き換えない。
+func (h *AuthHandler) ChangePassword(c echo.Context) error {
+	var in changePasswordInput
+	if err := c.Bind(&in); err != nil {
+		return writeError(c, http.StatusBadRequest, "invalid request body")
+	}
+	// RequireUser を通っているので Cookie は必ずある
+	cookie, err := c.Cookie(middleware.SessionCookieName)
+	if err != nil {
+		return writeError(c, http.StatusUnauthorized, "login required")
+	}
+
+	err = h.service.ChangePassword(c.Request().Context(), middleware.UserFromContext(c).ID, cookie.Value, in.CurrentPassword, in.NewPassword)
+	if err != nil {
+		var inputErr *auth.InputError
+		switch {
+		case errors.As(err, &inputErr):
+			return writeError(c, http.StatusBadRequest, inputErr.Error())
+		case errors.Is(err, auth.ErrWrongCurrentPassword):
+			return writeError(c, http.StatusForbidden, err.Error())
+		case errors.Is(err, auth.ErrNotFound):
+			// セッションを確かめた直後にユーザーが消えたときだけ
+			return writeError(c, http.StatusUnauthorized, "login required")
+		}
+		c.Logger().Errorf("auth: change password: %v", err)
+		return writeError(c, http.StatusInternalServerError, "failed to change password")
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // Logout handles POST /api/auth/logout
 func (h *AuthHandler) Logout(c echo.Context) error {
 	if cookie, err := c.Cookie(middleware.SessionCookieName); err == nil {

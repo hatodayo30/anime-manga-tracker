@@ -323,3 +323,10 @@ button.seg-opt { border: none; background: none; font: inherit; color: inherit; 
 @media (prefers-reduced-motion: reduce) {
   .onboarding-dots span { transition: none; }
 }
+
+/* — account — */
+.account-section { max-width: 480px; gap: var(--space-3); padding: var(--space-6); margin-bottom: var(--space-6); }
+.mobile-topbar { display: none; }
+@media (max-width: 800px) {
+  .mobile-topbar { display: flex; justify-content: flex-end; margin: -8px 0 var(--space-2); }
+}

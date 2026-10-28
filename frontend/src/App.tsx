@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { ProtectedRoute } from './components/ProtectedRoute'
+import { AccountPage } from './pages/AccountPage'
 import { AuthFormPage } from './pages/AuthFormPage'
 import { HomePage } from './pages/HomePage'
 import { LibraryPage } from './pages/LibraryPage'
@@ -73,6 +74,16 @@ function App() {
           <Layout>
             <ProtectedRoute>
               <SeasonPage />
+            </ProtectedRoute>
+          </Layout>
+        }
+      />
+      <Route
+        path="/account"
+        element={
+          <Layout>
+            <ProtectedRoute>
+              <AccountPage />
             </ProtectedRoute>
           </Layout>
         }

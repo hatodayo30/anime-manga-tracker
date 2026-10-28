@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { OnboardingModal } from '../components/OnboardingModal'
 import { useAuth } from '../context/AuthContext'
+import { resetKindToAnime } from '../hooks/useKind'
 import { api } from '../lib/api'
 import { hasSeenOnboarding } from '../lib/onboarding'
 import { safeNextPath } from '../lib/safeNextPath'
@@ -47,6 +48,7 @@ export function AuthFormPage({ mode }: { mode: 'login' | 'signup' }) {
       } else {
         await api.signup({ email, password })
       }
+      resetKindToAnime()
       await refresh()
       navigate(safeNextPath(location.search) || '/')
     } catch (err) {

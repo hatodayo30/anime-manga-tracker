@@ -73,6 +73,8 @@ func TestExternalAPIRoutesRequireLogin(t *testing.T) {
 		{http.MethodGet, "/api/new-releases/comics"},
 		{http.MethodGet, "/api/books/latest-volume?title=x"},
 		{http.MethodGet, "/api/records"},
+		// 外部 API は呼ばないが、ログイン中の本人のパスワードを変える操作なので同じく塞がっていること
+		{http.MethodPost, "/api/auth/password"},
 	}
 	for _, r := range routes {
 		t.Run(r.method+" "+r.path, func(t *testing.T) {

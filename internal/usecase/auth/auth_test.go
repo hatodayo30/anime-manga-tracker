@@ -14,9 +14,16 @@ import (
 )
 
 type fakeUserRepository struct {
-	createFunc      func(ctx context.Context, email, passwordHash string) (*domain.User, error)
-	findByEmailFunc func(ctx context.Context, email string) (*auth.UserWithHash, error)
-	called          bool
+	createFunc       func(ctx context.Context, email, passwordHash string) (*domain.User, error)
+	findByEmailFunc  func(ctx context.Context, email string) (*auth.UserWithHash, error)
+	passwordHashFunc func(ctx context.Context, userID int64) (string, error)
+	called           bool
+
+	// UpdatePassword に渡された引数。呼ばれなければ updateCalled は false のまま
+	updateCalled   bool
+	updatedUserID  int64
+	updatedHash    string
+	updatedKeepTok string
 }
 
 func (f *fakeUserRepository) Create(ctx context.Context, email, passwordHash string) (*domain.User, error) {
@@ -27,6 +34,20 @@ func (f *fakeUserRepository) Create(ctx context.Context, email, passwordHash str
 func (f *fakeUserRepository) FindByEmail(ctx context.Context, email string) (*auth.UserWithHash, error) {
 	f.called = true
 	return f.findByEmailFunc(ctx, email)
+}
+
+func (f *fakeUserRepository) PasswordHash(ctx context.Context, userID int64) (string, error) {
+	f.called = true
+	return f.passwordHashFunc(ctx, userID)
+}
+
+func (f *fakeUserRepository) UpdatePassword(ctx context.Context, userID int64, passwordHash, keepToken string) error {
+	f.called = true
+	f.updateCalled = true
+	f.updatedUserID = userID
+	f.updatedHash = passwordHash
+	f.updatedKeepTok = keepToken
+	return nil
 }
 
 type fakeSessionRepository struct {
@@ -312,5 +333,100 @@ func TestService_CurrentUser_DelegatesToRepository(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// usersWithPassword は userID 1 のパスワードが password であるリポジトリを返す。
+func usersWithPassword(t *testing.T, password string) *fakeUserRepository {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+	return &fakeUserRepository{
+		passwordHashFunc: func(ctx context.Context, userID int64) (string, error) {
+			if userID != 1 {
+				return "", auth.ErrNotFound
+			}
+			return string(hash), nil
+		},
+	}
+}
+
+// 新しいパスワードが条件を満たさなければ、bcrypt もリポジトリも回さずに入力エラー（400）を返す。
+// 条件は SignUp と同じ。現在と同じパスワードへの変更も、変えたつもりで何も変わらないので弾く。
+func TestService_ChangePassword_Validation(t *testing.T) {
+	tests := []struct {
+		name        string
+		newPassword string
+	}{
+		{"short password", "short"},
+		{"password over 72 bytes", strings.Repeat("a", 73)},
+		{"same as current", "current-password"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			users := usersWithPassword(t, "current-password")
+			s := auth.NewService(users, &fakeSessionRepository{})
+
+			err := s.ChangePassword(context.Background(), 1, "a-token", "current-password", tt.newPassword)
+			var inputErr *auth.InputError
+			if !errors.As(err, &inputErr) {
+				t.Fatalf("expected InputError, got %v", err)
+			}
+			if users.called {
+				t.Error("repository should not be called when validation fails")
+			}
+		})
+	}
+}
+
+// 現在のパスワードが違えば差し替えない。開いたままの端末やセッションを盗んだ相手が、
+// 本人を締め出せないようにするため。ログインの失敗（401）とは別のエラーにする。
+func TestService_ChangePassword_WrongCurrentPassword(t *testing.T) {
+	users := usersWithPassword(t, "current-password")
+	s := auth.NewService(users, &fakeSessionRepository{})
+
+	err := s.ChangePassword(context.Background(), 1, "a-token", "wrong-password", "new-password")
+	if !errors.Is(err, auth.ErrWrongCurrentPassword) {
+		t.Fatalf("expected ErrWrongCurrentPassword, got %v", err)
+	}
+	if users.updateCalled {
+		t.Error("UpdatePassword should not be called when the current password is wrong")
+	}
+}
+
+// 成功したら、新しいパスワードのハッシュを、いまのセッションのトークンと一緒に渡す。
+// リポジトリはそのトークン以外のセッションを消すので、他の端末はログアウトされ、いまの端末は残る。
+func TestService_ChangePassword_Success(t *testing.T) {
+	users := usersWithPassword(t, "current-password")
+	s := auth.NewService(users, &fakeSessionRepository{})
+
+	if err := s.ChangePassword(context.Background(), 1, "a-token", "current-password", "new-password"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !users.updateCalled {
+		t.Fatal("expected UpdatePassword to be called")
+	}
+	if users.updatedUserID != 1 {
+		t.Errorf("userID = %d, want 1", users.updatedUserID)
+	}
+	if users.updatedKeepTok != "a-token" {
+		t.Errorf("keepToken = %q, want %q", users.updatedKeepTok, "a-token")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(users.updatedHash), []byte("new-password")); err != nil {
+		t.Errorf("stored hash does not match the new password: %v", err)
+	}
+}
+
+// ユーザーが見つからなければ ErrNotFound をそのまま返す（ハンドラは 401 にする）。
+func TestService_ChangePassword_UserNotFound(t *testing.T) {
+	users := usersWithPassword(t, "current-password")
+	s := auth.NewService(users, &fakeSessionRepository{})
+
+	err := s.ChangePassword(context.Background(), 2, "a-token", "current-password", "new-password")
+	if !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }

@@ -83,6 +83,9 @@ export const api = {
   signup: (body: { email: string; password: string }) =>
     request<Me>('/auth/signup', { method: 'POST', body: JSON.stringify(body) }),
   logout: () => request<null>('/auth/logout', { method: 'POST' }),
+  // 成功すると、いまの端末以外のセッションはすべて消える。現在のパスワードが違えば 403
+  changePassword: (body: { currentPassword: string; newPassword: string }) =>
+    request<null>('/auth/password', { method: 'POST', body: JSON.stringify(body) }),
 
   // ホームの「AI のおすすめ」（BACKLOG 9-c、ログイン必須）。source が 'genre' のときは記録が少ないか
   // AI が使えなかったときのジャンルベースのおすすめで、reason は付かない。
