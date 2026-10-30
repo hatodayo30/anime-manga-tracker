@@ -25,6 +25,10 @@ var ErrInvalidCredentials = errors.New("invalid email or password")
 // セッション切れと区別できず、ログイン画面へ送ってしまうため（ハンドラは 403 にする）。
 var ErrWrongCurrentPassword = errors.New("current password is incorrect")
 
+// ErrNoPassword はパスワード変更で、利用者がパスワードを持っていない（Google だけで登録した）ことを表す。
+// ハンドラは 400 にする。ErrNotFound のままだと 401 になり、フロントがログイン画面へ送ってしまう。
+var ErrNoPassword = errors.New("this account has no password (signed up with Google)")
+
 // InputError は利用者の入力が条件を満たさないことを表す。ハンドラはこれを 400 にし、
 // それ以外（DB の失敗など）は 500 にする。メッセージはそのまま画面に出る。
 type InputError struct{ msg string }
@@ -63,10 +67,24 @@ var dummyHash = sync.OnceValue(func() []byte {
 type Service struct {
 	users    UserRepository
 	sessions SessionRepository
+	// google は Google ログイン（BACKLOG 8-b）。nil なら無効で、GoogleEnabled が false を返す
+	google GoogleGateway
 }
 
-func NewService(users UserRepository, sessions SessionRepository) *Service {
-	return &Service{users: users, sessions: sessions}
+// Option は NewService の任意の設定。
+type Option func(*Service)
+
+// WithGoogle は Google ログインを有効にする。GOOGLE_CLIENT_ID などが揃っている環境でだけ渡す。
+func WithGoogle(g GoogleGateway) Option {
+	return func(s *Service) { s.google = g }
+}
+
+func NewService(users UserRepository, sessions SessionRepository, opts ...Option) *Service {
+	s := &Service{users: users, sessions: sessions}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // SignUp はユーザーを作成し、ログイン済みとして扱うセッションを発行する。

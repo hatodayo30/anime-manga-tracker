@@ -53,6 +53,15 @@ type Config struct {
 	// RakutenAffiliateID は楽天アフィリエイト ID（任意）。付けると商品ページのリンクがアフィリエイト経由になる。
 	// 規約（第 3 条）はアフィリエイトの対象の商品へのリンクをアフィリエイト経由で作るよう定めている（BACKLOG 11-b）
 	RakutenAffiliateID string
+
+	// GoogleClientID / GoogleClientSecret / GoogleRedirectURL は Google ログイン（BACKLOG 8-b）の設定。
+	// 3 つとも揃っていなければ Google ログインは無効で、ログイン画面にボタンも出ない（起動は止めない）。
+	// クライアントシークレットは本物の秘密なので、本番では DATABASE_URL と同じく SSM から secrets で渡す。
+	// リダイレクト URI は Google Cloud Console に登録したものと完全一致が要る（…/api/auth/google/callback）。
+	// 秘密ではないが環境ごとに違うので、コードに決め打ちしない
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
 }
 
 // Load は .env（存在すれば）と環境変数から設定を読み込む。
@@ -88,6 +97,10 @@ func Load() (*Config, error) {
 		RakutenAccessKey:     os.Getenv("RAKUTEN_ACCESS_KEY"),
 		RakutenReferer:       getEnv("RAKUTEN_REFERER", "https://mirokuapp.com/"),
 		RakutenAffiliateID:   os.Getenv("RAKUTEN_AFFILIATE_ID"),
+
+		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		GoogleRedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
 	}
 
 	if cfg.DatabaseURL == "" {

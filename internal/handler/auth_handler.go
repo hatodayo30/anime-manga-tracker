@@ -91,6 +91,9 @@ func (h *AuthHandler) ChangePassword(c echo.Context) error {
 			return writeError(c, http.StatusBadRequest, inputErr.Error())
 		case errors.Is(err, auth.ErrWrongCurrentPassword):
 			return writeError(c, http.StatusForbidden, err.Error())
+		case errors.Is(err, auth.ErrNoPassword):
+			// Google だけで登録したユーザー。401 にするとセッション切れと区別できない
+			return writeError(c, http.StatusBadRequest, err.Error())
 		case errors.Is(err, auth.ErrNotFound):
 			// セッションを確かめた直後にユーザーが消えたときだけ
 			return writeError(c, http.StatusUnauthorized, "login required")
