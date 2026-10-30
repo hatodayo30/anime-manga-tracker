@@ -21,6 +21,13 @@ type fakeUserRepository struct {
 	passwordHashFunc func(ctx context.Context, userID int64) (string, error)
 	called           bool
 
+	// Google ログイン（google_test.go）で使う。nil のまま呼ばれたら ErrNotFound を返す
+	findByIdentityFunc      func(ctx context.Context, provider, subject string) (*domain.User, error)
+	linkIdentityByEmailFunc func(ctx context.Context, email, provider, subject string) (*domain.User, error)
+	createWithIdentityFunc  func(ctx context.Context, email, provider, subject string) (*domain.User, error)
+	// 呼ばれた順のメソッド名
+	identityCalls []string
+
 	// UpdatePassword に渡された引数。呼ばれなければ updateCalled は false のまま
 	updateCalled         bool
 	updatedUserID        int64
@@ -50,6 +57,30 @@ func (f *fakeUserRepository) UpdatePassword(ctx context.Context, userID int64, p
 	f.updatedHash = passwordHash
 	f.updatedKeepTokenHash = keepTokenHash
 	return nil
+}
+
+func (f *fakeUserRepository) FindByIdentity(ctx context.Context, provider, subject string) (*domain.User, error) {
+	f.identityCalls = append(f.identityCalls, "FindByIdentity")
+	if f.findByIdentityFunc == nil {
+		return nil, auth.ErrNotFound
+	}
+	return f.findByIdentityFunc(ctx, provider, subject)
+}
+
+func (f *fakeUserRepository) LinkIdentityByEmail(ctx context.Context, email, provider, subject string) (*domain.User, error) {
+	f.identityCalls = append(f.identityCalls, "LinkIdentityByEmail")
+	if f.linkIdentityByEmailFunc == nil {
+		return nil, auth.ErrNotFound
+	}
+	return f.linkIdentityByEmailFunc(ctx, email, provider, subject)
+}
+
+func (f *fakeUserRepository) CreateWithIdentity(ctx context.Context, email, provider, subject string) (*domain.User, error) {
+	f.identityCalls = append(f.identityCalls, "CreateWithIdentity")
+	if f.createWithIdentityFunc == nil {
+		return nil, auth.ErrNotFound
+	}
+	return f.createWithIdentityFunc(ctx, email, provider, subject)
 }
 
 type fakeSessionRepository struct {

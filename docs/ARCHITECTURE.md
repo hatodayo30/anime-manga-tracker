@@ -82,6 +82,7 @@ DB は PostgreSQL 16 で、マイグレーションはバイナリに焼き込�
 | `internal/jikan/` | Jikan (MyAnimeList) クライアント。最小リクエスト間隔でレート制御 |
 | `internal/claude/` | Claude API クライアント（AI 翻訳・自然文検索の条件づくり）と、プロセス全体の日次トークン上限 |
 | `internal/rakuten/` | 楽天ブックス書籍検索 API クライアント（新刊）。最小リクエスト間隔でレート制御 |
+| `internal/google/` | Google ログインのクライアント（認可コードの引き換えと userinfo）。`usecase/auth` の `GoogleGateway` を実装する |
 | `internal/translate/` | MyMemory 翻訳クライアント（AI 翻訳のフォールバック）。文単位のチャンク分割を含む |
 | `migrations/` | `NNNN_name.up.sql` / `.down.sql` の組と `embed.FS` |
 | `frontend/` | React + Vite。`src/pages` / `src/components` / `src/context` / `src/hooks` / `src/lib` |
@@ -99,7 +100,8 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 
 | テーブル | 役割 | 主な制約 |
 | --- | --- | --- |
-| `users` | メール + bcrypt ハッシュ | `email` は UNIQUE |
+| `users` | 利用者（メールアドレスと作成日時だけ） | `email` は UNIQUE |
+| `user_identities` | ログインの手段（`password` / `google`）。パスワードの行だけが bcrypt ハッシュを持つ | `(provider, subject)` と `(user_id, provider)` が UNIQUE、`user_id` は ON DELETE CASCADE |
 | `sessions` | セッショントークンのハッシュと有効期限 | `token_hash`（SHA-256 の 16 進）が PK、`user_id` は ON DELETE CASCADE。平文は Cookie にだけある |
 | `records` | ライブラリの 1 作品 | `(user_id, anilist_id, media_type)` が UNIQUE。`media_type` と `status` は CHECK 制約 |
 | `applied_migrations` | 適用済みマイグレーションの記録 | ランナーが管理 |
@@ -114,10 +116,11 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 | `genres` | `TEXT[]`。おすすめ画面のジャンル集計に使う |
 | `updated_at` | 利用者の操作でだけ更新される。定期ジョブは意図的に触らない |
 
-マイグレーションは現在 6 本。`0001` が `records`、`0002` がユーザー・セッション追加と
+マイグレーションは現在 7 本。`0001` が `records`、`0002` がユーザー・セッション追加と
 `records` のユーザースコープ化、`0003` が評価とメモ、`0004` が漫画の進捗を話数から巻数へ
 切り替えるデータ移行、`0005` が AI 翻訳の保存先 `translations`、`0006` がセッショントークンの
-ハッシュ化（既存の行をその場で置き換え、列名を `token_hash` に変える）。
+ハッシュ化（既存の行をその場で置き換え、列名を `token_hash` に変える）、`0007` が `users.password_hash` を
+`user_identities` に移すデータ移行（BACKLOG 8-b。既存ユーザーは `provider='password'`・`subject=users.id` の行になる）。
 
 `0004` はカラムを追加せず、漫画レコードの `progress` を 0、`total` を NULL に戻すだけにしている。
 話数は巻数に換算できないためで、`total` は作品モーダルが AniList の最新情報を取得した
@@ -140,7 +143,7 @@ API も `/api/auth/*` と `/healthz` 以外はすべてログイン必須（2026
 | 検索 `/search`（内容で探す） | `/api/search/natural?type=&q=` | ログイン必須。Claude が文をジャンル・タグ・キーワードに変換し、AniList の条件検索で引く。AI が失敗したら入力をキーワードにして従来の検索に落とす（BACKLOG 9-b）。入力のたびではなく Enter か「探す」ボタンで確定したときだけ呼ぶ。画面は `pages/search/`（案 8）で、作品名と内容の欄は入力と結果を別々に持つ |
 | マイライブラリ `/library` | `/api/records?type=&sort=` | 種別と並び順だけをサーバーに渡し、ステータス絞り込み・ジャンル絞り込み・集計は取得済み配列を `useMemo` で加工 |
 | おすすめ `/recommend` | `/api/recommendations?type=&genres=` | 「どのジャンルを見るか」はクライアントがライブラリを集計して決める（API は利用者の記録を読まない） |
-| ログイン / 登録 | `/api/auth/*` | `AuthContext` が起動時に `/api/auth/me` を叩いてログイン状態を解決 |
+| ログイン / 登録 | `/api/auth/*` | `AuthContext` が起動時に `/api/auth/me` を叩いてログイン状態を解決。Google のボタンは `/api/auth/providers` が `google: true` のときだけ出す |
 
 ### 作品モーダル
 
@@ -318,7 +321,7 @@ NULL のまま固定される。拾うには巡回カーソル用のカラム追
 
 ## 認証と境界
 
-メール + パスワードの自前実装。パスワードは bcrypt（`DefaultCost`）でハッシュし、
+メール + パスワードと Google（下記）の自前実装。パスワードは bcrypt（`DefaultCost`）でハッシュし、
 セッショントークンは `crypto/rand` の 32 バイトを base64url でエンコードしたもの。
 有効期限は 30 日で、HttpOnly Cookie で配る。DB には平文を置かず、`usecase/auth` が SHA-256 の
 16 進にしてから保存・照合する（DB が漏れても Cookie を作れないように。BACKLOG 4-d）。
@@ -326,6 +329,29 @@ NULL のまま固定される。拾うには巡回カーソル用のカラム追
 `Secure` 属性は `COOKIE_SECURE`（既定 `false`）で切り替える。真偽値として読めない値は
 既定値に倒さず**起動時エラー**にする——`ture` のような綴り間違いで `Secure` が黙って外れると
 気付けないため。
+
+### Google ログイン（BACKLOG 8-b）
+
+認可コードフローを自前で回す（`golang.org/x/oauth2`）。`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` /
+`GOOGLE_REDIRECT_URL` が 3 つとも揃っていなければ無効で、ボタンも出ない。
+
+```
+ブラウザ ── GET /api/auth/google/start?next=… ──> handler
+            state（crypto/rand）を短命 Cookie（10 分・Path=/api/auth/google）に入れ、Google の同意画面へ 302
+ブラウザ <── Google の同意画面 ──> GET /api/auth/google/callback?state=…&code=…
+            handler: Cookie の state と照合（不一致なら /login?google_error=state）。Cookie は成否にかかわらず消す
+            usecase/auth.LoginWithGoogle: internal/google がコードを引き換え、userinfo で sub / email / email_verified を取る
+              1. (google, sub) の行があればそのユーザー（メールアドレスは見ない）
+              2. 無ければ初回。email_verified が false なら断る
+              3. 同じメールアドレスのユーザーがいれば紐付ける
+              4. いなければパスワードを持たないユーザーを作る
+            パスワードのログインと同じ createSession でセッションを発行し、next（無ければ /）へ 302
+```
+
+- `id_token` は検証しない。TLS で受け取ったアクセストークンで userinfo を叩くので、JWT の署名検証が要らない
+- 失敗はすべて `/login?google_error=<理由>` へのリダイレクトで返し、文言はフロント（`AuthFormPage`）が持つ
+- Google だけで登録したユーザーはパスワードを持たない。パスワードのログインは未登録と同じ扱い（ダミーハッシュとの比較）、
+  パスワード変更は 400 になる
 
 ### データの境界
 
@@ -342,7 +368,7 @@ NULL のまま固定される。拾うには巡回カーソル用のカラム追
 
 - `ORDER BY` 句は SQL に直接埋め込むため、`domain.SortKey` → 句の
   **map に定義済みのものだけ**を使い、未知のキーは既定へフォールバックする
-- ログイン失敗はメール未登録でもパスワード不一致でも同じ `ErrInvalidCredentials`
+- ログイン失敗はメール未登録でもパスワード不一致でも同じ `ErrInvalidCredentials`（Google だけで登録したメールアドレスも同じ）
 - `/healthz` は未認証で叩けるので、失敗の詳細はログにだけ残しレスポンスには出さない
 - マイグレーションは `pg_advisory_lock` を掛けてから走る。単一タスク前提なら本来不要だが、
   設定ミスや手元からの直接実行と重なったときの保険
@@ -360,8 +386,9 @@ NULL のまま固定される。拾うには巡回カーソル用のカラム追
 ### 穴
 
 - **CI が `go test` を回していない**。gofmt / vet / build と、フロントの oxlint / tsc / vite build のみ
-- **DB 依存の SQL に回帰テストがない**。`StaleAiringAnimeIDs` / `UpdateNextAiringAt` は
-  使い捨てスキーマとローカル実行で手元確認しただけ
+- **DB 依存の SQL の回帰テストはユーザー・ログイン手段まわりだけ**（`user_repository_integration_test.go`、2026-10-31）。
+  `TEST_DATABASE_URL`（データベース名が `_test` で終わるもの。スキーマを作り直すため）があるときだけ走り、
+  CI でも流れていない。`StaleAiringAnimeIDs` / `UpdateNextAiringAt` などは使い捨てスキーマとローカル実行で手元確認しただけ
 - **フロントエンドにテストがない**。型チェックと lint まで
 
 ### ローカル実行

@@ -12,6 +12,7 @@ import (
 	"github.com/hatodayo30/anime-manga-tracker/internal/anilist"
 	"github.com/hatodayo30/anime-manga-tracker/internal/claude"
 	"github.com/hatodayo30/anime-manga-tracker/internal/config"
+	"github.com/hatodayo30/anime-manga-tracker/internal/google"
 	"github.com/hatodayo30/anime-manga-tracker/internal/handler"
 	"github.com/hatodayo30/anime-manga-tracker/internal/infrastructure/postgres"
 	"github.com/hatodayo30/anime-manga-tracker/internal/jikan"
@@ -67,7 +68,19 @@ func run() error {
 
 	userRepo := postgres.NewUserRepository(pool)
 	sessionRepo := postgres.NewSessionRepository(pool)
-	authUsecase := auth.NewService(userRepo, sessionRepo)
+	// Google ログイン（BACKLOG 8-b）。3 つとも揃っていなければ渡さず、パスワードのログインだけで動く。
+	// 楽天と同じく、一部だけ入っているのは入れ忘れなのでログで分かるようにする
+	var authOpts []auth.Option
+	switch {
+	case cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" && cfg.GoogleRedirectURL != "":
+		authOpts = append(authOpts, auth.WithGoogle(google.NewClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURL)))
+		log.Printf("google login: enabled (redirect %s)", cfg.GoogleRedirectURL)
+	case cfg.GoogleClientID != "" || cfg.GoogleClientSecret != "" || cfg.GoogleRedirectURL != "":
+		log.Printf("google login: disabled (set all of GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URL)")
+	default:
+		log.Printf("google login: disabled (GOOGLE_CLIENT_ID is not set)")
+	}
+	authUsecase := auth.NewService(userRepo, sessionRepo, authOpts...)
 	authHandler := handler.NewAuthHandler(authUsecase, cfg.CookieSecure)
 	authMiddleware := middleware.NewAuth(authUsecase)
 

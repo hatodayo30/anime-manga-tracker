@@ -78,6 +78,8 @@ export const api = {
   latestVolume: (title: string) => request<LatestVolumeResult>('/books/latest-volume' + buildQuery({ title })),
 
   getMe: () => request<Me>('/auth/me'),
+  // 使えるログインの手段（BACKLOG 8-b）。Google は GOOGLE_CLIENT_ID などが無い環境では false
+  authProviders: () => request<{ google: boolean }>('/auth/providers'),
   login: (body: { email: string; password: string }) =>
     request<Me>('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   signup: (body: { email: string; password: string }) =>

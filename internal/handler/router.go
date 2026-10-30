@@ -181,6 +181,12 @@ func NewRouter(h Handlers) *echo.Echo {
 	e.POST("/api/auth/password", h.Auth.ChangePassword, publicAPILimit, h.RequireUser, loginLimit)
 	e.POST("/api/auth/logout", h.Auth.Logout, publicAPILimit)
 	e.GET("/api/auth/me", h.Auth.Me, publicAPILimit)
+	// Google ログイン（BACKLOG 8-b）。loginLimit は重ねない。あちらは bcrypt の CPU と総当たり・存在確認を
+	// 抑えるためのもので、Google ログインはどれにも当たらない（パスワードが無く、既存かどうかを応答で区別しない）。
+	// コールバックは Google へ 2 本投げるので、1 IP からの連打は publicAPILimit で抑える
+	e.GET("/api/auth/providers", h.Auth.Providers, publicAPILimit)
+	e.GET("/api/auth/google/start", h.Auth.GoogleStart, publicAPILimit)
+	e.GET("/api/auth/google/callback", h.Auth.GoogleCallback, publicAPILimit)
 
 	e.Any("/*", echo.WrapHandler(NewStaticHandler(h.WebDir)))
 
