@@ -2,6 +2,8 @@ package auth_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -20,10 +22,10 @@ type fakeUserRepository struct {
 	called           bool
 
 	// UpdatePassword に渡された引数。呼ばれなければ updateCalled は false のまま
-	updateCalled   bool
-	updatedUserID  int64
-	updatedHash    string
-	updatedKeepTok string
+	updateCalled         bool
+	updatedUserID        int64
+	updatedHash          string
+	updatedKeepTokenHash string
 }
 
 func (f *fakeUserRepository) Create(ctx context.Context, email, passwordHash string) (*domain.User, error) {
@@ -41,39 +43,54 @@ func (f *fakeUserRepository) PasswordHash(ctx context.Context, userID int64) (st
 	return f.passwordHashFunc(ctx, userID)
 }
 
-func (f *fakeUserRepository) UpdatePassword(ctx context.Context, userID int64, passwordHash, keepToken string) error {
+func (f *fakeUserRepository) UpdatePassword(ctx context.Context, userID int64, passwordHash, keepTokenHash string) error {
 	f.called = true
 	f.updateCalled = true
 	f.updatedUserID = userID
 	f.updatedHash = passwordHash
-	f.updatedKeepTok = keepToken
+	f.updatedKeepTokenHash = keepTokenHash
 	return nil
 }
 
 type fakeSessionRepository struct {
-	createFunc   func(ctx context.Context, token string, userID int64, expiresAt time.Time) error
-	findUserFunc func(ctx context.Context, token string) (*domain.User, error)
-	deleteFunc   func(ctx context.Context, token string) error
+	createFunc   func(ctx context.Context, tokenHash string, userID int64, expiresAt time.Time) error
+	findUserFunc func(ctx context.Context, tokenHash string) (*domain.User, error)
+	deleteFunc   func(ctx context.Context, tokenHash string) error
 	deleteCalled bool
+	// Delete に渡された引数
+	deletedTokenHash string
 }
 
-func (f *fakeSessionRepository) Create(ctx context.Context, token string, userID int64, expiresAt time.Time) error {
+func (f *fakeSessionRepository) Create(ctx context.Context, tokenHash string, userID int64, expiresAt time.Time) error {
 	if f.createFunc == nil {
 		return nil
 	}
-	return f.createFunc(ctx, token, userID, expiresAt)
+	return f.createFunc(ctx, tokenHash, userID, expiresAt)
 }
 
-func (f *fakeSessionRepository) FindUser(ctx context.Context, token string) (*domain.User, error) {
-	return f.findUserFunc(ctx, token)
+func (f *fakeSessionRepository) FindUser(ctx context.Context, tokenHash string) (*domain.User, error) {
+	return f.findUserFunc(ctx, tokenHash)
 }
 
-func (f *fakeSessionRepository) Delete(ctx context.Context, token string) error {
+func (f *fakeSessionRepository) Delete(ctx context.Context, tokenHash string) error {
 	f.deleteCalled = true
+	f.deletedTokenHash = tokenHash
 	if f.deleteFunc == nil {
 		return nil
 	}
-	return f.deleteFunc(ctx, token)
+	return f.deleteFunc(ctx, tokenHash)
+}
+
+// aTokenHash は "a-token" の SHA-256 を 16 進にしたもの（`printf a-token | shasum -a 256` の値）。
+// 実装の hashToken を呼び直して比べるのではなく固定値で持つのは、計算方法が変わったときに
+// テストも一緒に変わってしまわないようにするため。DB に残っている行（0006 のマイグレーションで
+// 同じ計算で置き換えたもの）と食い違えば、既存の利用者が全員ログアウトされる。
+const aTokenHash = "1f6076e3a47ba1ded08025ffe06e57af217c14f9407f33fba50f99b1c7019387"
+
+// sha256Hex は SignUp のように乱数のトークンが返る場面で、保存されたハッシュと照らすために使う。
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 func TestService_SignUp_Validation(t *testing.T) {
@@ -151,10 +168,10 @@ func TestService_SignUp_Success(t *testing.T) {
 			return want, nil
 		},
 	}
-	var createdToken string
+	var createdTokenHash string
 	sessions := &fakeSessionRepository{
-		createFunc: func(ctx context.Context, token string, userID int64, expiresAt time.Time) error {
-			createdToken = token
+		createFunc: func(ctx context.Context, tokenHash string, userID int64, expiresAt time.Time) error {
+			createdTokenHash = tokenHash
 			if userID != want.ID {
 				t.Errorf("unexpected userID: %d", userID)
 			}
@@ -170,8 +187,15 @@ func TestService_SignUp_Success(t *testing.T) {
 	if user != want {
 		t.Errorf("got %v, want %v", user, want)
 	}
-	if token == "" || token != createdToken {
+	if token == "" {
 		t.Error("expected a non-empty token to be created")
+	}
+	// リポジトリに渡るのは Cookie に入れる平文ではなく、そのハッシュ（BACKLOG 4-d）
+	if createdTokenHash == token {
+		t.Error("the plain token should not reach the repository")
+	}
+	if createdTokenHash != sha256Hex(token) {
+		t.Errorf("stored %q, want the SHA-256 of the returned token", createdTokenHash)
 	}
 	if expiresAt.Before(time.Now()) {
 		t.Error("expected expiresAt to be in the future")
@@ -264,7 +288,7 @@ func TestService_Login_Success(t *testing.T) {
 		},
 	}
 	sessions := &fakeSessionRepository{
-		createFunc: func(ctx context.Context, token string, userID int64, expiresAt time.Time) error {
+		createFunc: func(ctx context.Context, tokenHash string, userID int64, expiresAt time.Time) error {
 			return nil
 		},
 	}
@@ -286,11 +310,15 @@ func TestService_Logout(t *testing.T) {
 	sessions := &fakeSessionRepository{}
 	s := auth.NewService(&fakeUserRepository{}, sessions)
 
-	if err := s.Logout(context.Background(), "some-token"); err != nil {
+	if err := s.Logout(context.Background(), "a-token"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !sessions.deleteCalled {
 		t.Error("expected sessions.Delete to be called")
+	}
+	// Cookie の平文ではなくハッシュで消す。平文で消そうとすると、どの行にも当たらずログアウトできない
+	if sessions.deletedTokenHash != aTokenHash {
+		t.Errorf("Delete got %q, want %q", sessions.deletedTokenHash, aTokenHash)
 	}
 }
 
@@ -318,9 +346,10 @@ func TestService_CurrentUser_EmptyToken(t *testing.T) {
 func TestService_CurrentUser_DelegatesToRepository(t *testing.T) {
 	want := &domain.User{ID: 1, Email: "user@example.com"}
 	sessions := &fakeSessionRepository{
-		findUserFunc: func(ctx context.Context, token string) (*domain.User, error) {
-			if token != "a-token" {
-				t.Errorf("unexpected token: %s", token)
+		// Cookie の平文ではなくハッシュで引く
+		findUserFunc: func(ctx context.Context, tokenHash string) (*domain.User, error) {
+			if tokenHash != aTokenHash {
+				t.Errorf("FindUser got %q, want %q", tokenHash, aTokenHash)
 			}
 			return want, nil
 		},
@@ -397,8 +426,9 @@ func TestService_ChangePassword_WrongCurrentPassword(t *testing.T) {
 	}
 }
 
-// 成功したら、新しいパスワードのハッシュを、いまのセッションのトークンと一緒に渡す。
-// リポジトリはそのトークン以外のセッションを消すので、他の端末はログアウトされ、いまの端末は残る。
+// 成功したら、新しいパスワードのハッシュを、いまのセッションのトークンのハッシュと一緒に渡す。
+// リポジトリはそれ以外のセッションを消すので、他の端末はログアウトされ、いまの端末は残る。
+// 平文で渡すとどの行とも一致せず、いまの端末まで消えてしまう。
 func TestService_ChangePassword_Success(t *testing.T) {
 	users := usersWithPassword(t, "current-password")
 	s := auth.NewService(users, &fakeSessionRepository{})
@@ -412,8 +442,8 @@ func TestService_ChangePassword_Success(t *testing.T) {
 	if users.updatedUserID != 1 {
 		t.Errorf("userID = %d, want 1", users.updatedUserID)
 	}
-	if users.updatedKeepTok != "a-token" {
-		t.Errorf("keepToken = %q, want %q", users.updatedKeepTok, "a-token")
+	if users.updatedKeepTokenHash != aTokenHash {
+		t.Errorf("keepTokenHash = %q, want %q", users.updatedKeepTokenHash, aTokenHash)
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(users.updatedHash), []byte("new-password")); err != nil {
 		t.Errorf("stored hash does not match the new password: %v", err)

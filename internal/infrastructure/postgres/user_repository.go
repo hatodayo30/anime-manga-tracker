@@ -70,7 +70,7 @@ func (r *UserRepository) PasswordHash(ctx context.Context, userID int64) (string
 // UpdatePassword は users と sessions の 2 つの表を触るが、SessionRepository ではなくここに置く。
 // パスワードの差し替えと古いセッションの削除は 1 つのトランザクションでなければならず、
 // リポジトリをまたぐとトランザクションを usecase に持ち出すことになるため。
-func (r *UserRepository) UpdatePassword(ctx context.Context, userID int64, passwordHash, keepToken string) error {
+func (r *UserRepository) UpdatePassword(ctx context.Context, userID int64, passwordHash, keepTokenHash string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin update password: %w", err)
@@ -84,7 +84,7 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, userID int64, passw
 	if tag.RowsAffected() == 0 {
 		return auth.ErrNotFound
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND token <> $2`, userID, keepToken); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2`, userID, keepTokenHash); err != nil {
 		return fmt.Errorf("delete other sessions: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
