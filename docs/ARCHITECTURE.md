@@ -100,7 +100,7 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 | テーブル | 役割 | 主な制約 |
 | --- | --- | --- |
 | `users` | メール + bcrypt ハッシュ | `email` は UNIQUE |
-| `sessions` | セッショントークンと有効期限 | `token` が PK、`user_id` は ON DELETE CASCADE |
+| `sessions` | セッショントークンのハッシュと有効期限 | `token_hash`（SHA-256 の 16 進）が PK、`user_id` は ON DELETE CASCADE。平文は Cookie にだけある |
 | `records` | ライブラリの 1 作品 | `(user_id, anilist_id, media_type)` が UNIQUE。`media_type` と `status` は CHECK 制約 |
 | `applied_migrations` | 適用済みマイグレーションの記録 | ランナーが管理 |
 
@@ -114,9 +114,10 @@ AniList の作品情報（タイトル・表紙・ジャンル）を正規化せ
 | `genres` | `TEXT[]`。おすすめ画面のジャンル集計に使う |
 | `updated_at` | 利用者の操作でだけ更新される。定期ジョブは意図的に触らない |
 
-マイグレーションは現在 4 本。`0001` が `records`、`0002` がユーザー・セッション追加と
+マイグレーションは現在 6 本。`0001` が `records`、`0002` がユーザー・セッション追加と
 `records` のユーザースコープ化、`0003` が評価とメモ、`0004` が漫画の進捗を話数から巻数へ
-切り替えるデータ移行。
+切り替えるデータ移行、`0005` が AI 翻訳の保存先 `translations`、`0006` がセッショントークンの
+ハッシュ化（既存の行をその場で置き換え、列名を `token_hash` に変える）。
 
 `0004` はカラムを追加せず、漫画レコードの `progress` を 0、`total` を NULL に戻すだけにしている。
 話数は巻数に換算できないためで、`total` は作品モーダルが AniList の最新情報を取得した
@@ -319,7 +320,8 @@ NULL のまま固定される。拾うには巡回カーソル用のカラム追
 
 メール + パスワードの自前実装。パスワードは bcrypt（`DefaultCost`）でハッシュし、
 セッショントークンは `crypto/rand` の 32 バイトを base64url でエンコードしたもの。
-有効期限は 30 日で、HttpOnly Cookie で配る。
+有効期限は 30 日で、HttpOnly Cookie で配る。DB には平文を置かず、`usecase/auth` が SHA-256 の
+16 進にしてから保存・照合する（DB が漏れても Cookie を作れないように。BACKLOG 4-d）。
 
 `Secure` 属性は `COOKIE_SECURE`（既定 `false`）で切り替える。真偽値として読めない値は
 既定値に倒さず**起動時エラー**にする——`ture` のような綴り間違いで `Secure` が黙って外れると

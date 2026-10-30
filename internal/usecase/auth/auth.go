@@ -4,7 +4,9 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -152,14 +154,14 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, keepToken, c
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
-	return s.users.UpdatePassword(ctx, userID, string(newHash), keepToken)
+	return s.users.UpdatePassword(ctx, userID, string(newHash), hashToken(keepToken))
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
 	}
-	return s.sessions.Delete(ctx, token)
+	return s.sessions.Delete(ctx, hashToken(token))
 }
 
 // CurrentUser はセッショントークンからログイン中ユーザーを引く。
@@ -167,19 +169,34 @@ func (s *Service) CurrentUser(ctx context.Context, token string) (*domain.User, 
 	if token == "" {
 		return nil, ErrNotFound
 	}
-	return s.sessions.FindUser(ctx, token)
+	return s.sessions.FindUser(ctx, hashToken(token))
 }
 
+// createSession はセッションを作り、Cookie に入れる平文のトークンを返す。DB に残すのはハッシュだけ。
 func (s *Service) createSession(ctx context.Context, userID int64) (string, time.Time, error) {
 	token, err := generateToken()
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("generate token: %w", err)
 	}
 	expiresAt := time.Now().Add(SessionTTL)
-	if err := s.sessions.Create(ctx, token, userID, expiresAt); err != nil {
+	if err := s.sessions.Create(ctx, hashToken(token), userID, expiresAt); err != nil {
 		return "", time.Time{}, err
 	}
 	return token, expiresAt, nil
+}
+
+// hashToken はセッショントークンを DB に保存・照合するときの形（SHA-256 の 16 進）にする（BACKLOG 4-d）。
+// 平文のまま持つと、DB の中身が漏れた時点でそのまま Cookie を作ってなりすませる。
+//
+// bcrypt ではなく SHA-256 にするのは、トークンが crypto/rand の 32 バイトで総当たりが成り立たず、
+// 遅いハッシュで守る必要がないため。リクエストのたびに引くので速さも要り、ソルトを付けると
+// トークンから行を引けなくなる。
+//
+// リポジトリではなく usecase でハッシュするのは、「DB に平文を渡さない」ことを
+// fake のテストで保証するため。0006 のマイグレーションも同じ計算で既存の行を置き換えている。
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 func generateToken() (string, error) {
