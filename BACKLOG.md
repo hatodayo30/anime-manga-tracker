@@ -717,9 +717,12 @@ CI・Dockerfile の Go 1.25 のまま使える版に留めた）。
   残りは、Google の **2 回目のログイン**・**既存のパスワードユーザーへの紐付け**・**既存ユーザーのパスワードログイン**・
   **Google だけのユーザーのアカウント画面**（パスワード欄の代わりに説明が出るか）をブラウザで確かめること
   - ローカルの `GOOGLE_REDIRECT_URL` は Vite のポート（`http://localhost:5174/api/auth/google/callback`）にしている。
-    **Vite は 5174 が埋まっていると黙って 5175 以降に逃げる**（`strictPort` を設定していない）ので、別のプロジェクトが 5174 を
-    使っていると、Google から戻った先がそのプロジェクトになってログインが完了しない。確認時は `npx vite --strictPort` で起動した。
+    以前は **Vite が 5174 が埋まっていると黙って 5175 以降に逃げ**、別のプロジェクトが 5174 を使っていると、Google から戻った先が
+    そのプロジェクトになってログインが完了しなかった（2026-10-31 に実際に踏んだ）。**`vite.config.ts` に `strictPort: true` を入れ、
+    5174 が埋まっていれば起動に失敗するようにした（2026-10-31）。** 失敗したら 5174 を使っているプロセスを止めること。
     `.env` の `PORT` で決まる Go のポート（`:8090`）を redirect にすればこの問題は無いが、戻った後の画面が `frontend/dist` になる
+  - Vite はリポジトリ直下の `.env` を `loadEnv` で読み、`PORT` をプロキシ先に使う（2026-10-31）。以前は読まずに 8080 に落ちたため
+    `BACKEND_PORT` を付けて起動する必要があった。いまは `npm run dev` だけで `/api` が Go に届く
 - **本番の設定がまだ。** Google Cloud Console で OAuth クライアントを作り、`https://<ドメイン>/api/auth/google/callback` を
   登録する。`GOOGLE_CLIENT_SECRET` は SSM、`GOOGLE_CLIENT_ID` / `GOOGLE_REDIRECT_URL` はタスク定義の `environment`。
   `docs/DEPLOY-AWS*.md` にはまだ手順を書いていない
