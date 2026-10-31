@@ -702,20 +702,32 @@ CI・Dockerfile の Go 1.25 のまま使える版に留めた）。
 - ~~PKCE は使っていない~~ — **入れた（2026-10-31）。** verifier（crypto/rand 32 バイトの base64url、43 文字）を
   start で作って state の Cookie に `<state>.<verifier>[.<next>]` の形で入れ、同意画面には S256 の code_challenge だけを載せる。
   コールバックで verifier の無い Cookie（PKCE を入れる前に start したもの）は state の不一致と同じ扱いにする。
-  verifier はハンドラで作り、`oauth2` への依存は `internal/google` に閉じた。**実際の Google との往復は未確認**
-  （ローカルに OAuth クライアントが無い）。テストは偽の Google のトークンエンドポイントで `code_verifier` が届くことまで
+  verifier はハンドラで作り、`oauth2` への依存は `internal/google` に閉じた。テストは偽の Google のトークンエンドポイントで
+  `code_verifier` が届くことまで。**実際の Google との往復はローカルで確認済み（2026-10-31、新規登録の経路）**
 - **`users.email` は初回のメールアドレスのまま。** Google 側で変わっても追従しない（照合は `sub` なので動作には影響しない）
 - **同じ Google アカウントの初回ログインが並行すると、片方は `google_error=failed` になる。** もう一度押せば入れる
-- **実 DB での確認は使い捨ての DB までで、サーバーを起動した通し（ブラウザ）はまだ**（実装中はハッシュ化と並行していて、
+- **ブラウザでの通しは Google の新規登録だけ確認済み。**（実装中はハッシュ化と並行していて、
   マイグレーションが共有 DB に適用されるためサーバーを起動しなかった）。SQL・制約名・0007 のデータ移行と down は結合テスト
   （`internal/infrastructure/postgres/user_repository_integration_test.go`、`TEST_DATABASE_URL` があるときだけ走る）で確かめた。
   これで、パスワード登録の SQL が型の推論（`$1` を bigint と text の両方に使っていた）で必ず失敗するバグを見つけて直した。
   フェイクの usecase テストでは捕まらない種類のもの。ハッシュ化（`0006`）の後に rebase して、0006 → 0007 の順で
-  流しても通ることを確かめた（2026-10-31）。残りはサーバーを起動して、Google の新規・紐付け・2 回目と、
-  既存ユーザーのパスワードログインをブラウザで確かめること
+  流しても通ることを確かめた（2026-10-31）。
+  2026-10-31 にローカル（main `9e7cbca`、Vite :5174 → Go :8090）で実際の Google アカウントを使い、同意画面 → コールバック →
+  新規ユーザー作成 → ログイン状態まで通ることを確かめた（`user_identities` に `google` の行が 1 行だけのユーザーができる）。
+  残りは、Google の **2 回目のログイン**・**既存のパスワードユーザーへの紐付け**・**既存ユーザーのパスワードログイン**・
+  **Google だけのユーザーのアカウント画面**（パスワード欄の代わりに説明が出るか）をブラウザで確かめること
+  - ローカルの `GOOGLE_REDIRECT_URL` は Vite のポート（`http://localhost:5174/api/auth/google/callback`）にしている。
+    **Vite は 5174 が埋まっていると黙って 5175 以降に逃げる**（`strictPort` を設定していない）ので、別のプロジェクトが 5174 を
+    使っていると、Google から戻った先がそのプロジェクトになってログインが完了しない。確認時は `npx vite --strictPort` で起動した。
+    `.env` の `PORT` で決まる Go のポート（`:8090`）を redirect にすればこの問題は無いが、戻った後の画面が `frontend/dist` になる
 - **本番の設定がまだ。** Google Cloud Console で OAuth クライアントを作り、`https://<ドメイン>/api/auth/google/callback` を
   登録する。`GOOGLE_CLIENT_SECRET` は SSM、`GOOGLE_CLIENT_ID` / `GOOGLE_REDIRECT_URL` はタスク定義の `environment`。
   `docs/DEPLOY-AWS*.md` にはまだ手順を書いていない
+  - 本番の URI は `https://mirokuapp.com/api/auth/google/callback` の 1 本だけでよい。ALB の 80 / 443 の両リスナーに
+    `www.mirokuapp.com` → apex の 301 ルールがあり（2026-10-31 に `describe-rules` と `curl` で確認）、`www` で来た人も
+    アプリに届く前に apex に揃うので、state の Cookie（ホスト限定）がコールバックで届かない問題は起きない
+  - **本番で動いているイメージは `75d2102`（2026-10-25、PR #58）で、Google 認証（PR #62・#63）を含まない**
+    （2026-10-31 に確認）。環境変数を入れるのと合わせて main をデプロイする必要がある
 
 `GOOGLE_CLIENT_SECRET` は本物の秘密なので SSM 管理（`DATABASE_URL` と同じ経路）。招待コードを
 採らなかったので、平文 `environment` に置くべき値は増えない。
