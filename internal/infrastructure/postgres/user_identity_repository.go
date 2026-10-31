@@ -86,3 +86,19 @@ func (r *UserRepository) CreateWithIdentity(ctx context.Context, email, provider
 	}
 	return u, nil
 }
+
+// Providers は user_identities の provider を名前順で返す。アカウント画面が、パスワードを持たない
+// ユーザーにパスワード変更の欄を出さないために使う。
+func (r *UserRepository) Providers(ctx context.Context, userID int64) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT provider FROM user_identities WHERE user_id = $1 ORDER BY provider
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list providers: %w", err)
+	}
+	providers, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("list providers: %w", err)
+	}
+	return providers, nil
+}

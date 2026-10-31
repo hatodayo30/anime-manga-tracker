@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/hatodayo30/anime-manga-tracker/internal/domain"
 	"github.com/hatodayo30/anime-manga-tracker/internal/middleware"
 	"github.com/hatodayo30/anime-manga-tracker/internal/usecase/auth"
 )
@@ -36,10 +37,17 @@ func (h *AuthHandler) SignUp(c echo.Context) error {
 
 	user, token, expiresAt, err := h.service.SignUp(c.Request().Context(), in.Email, in.Password)
 	if err != nil {
-		if errors.Is(err, auth.ErrEmailTaken) {
+		// 入力の誤りだけを 400 で文言ごと返す。以前は全部を 400 と err.Error() で返していたので、
+		// DB の障害まで「入力が悪い」扱いになり、内部のエラーメッセージが画面に出ていた（BACKLOG 4-d）
+		var inputErr *auth.InputError
+		switch {
+		case errors.As(err, &inputErr):
+			return writeError(c, http.StatusBadRequest, inputErr.Error())
+		case errors.Is(err, auth.ErrEmailTaken):
 			return writeError(c, http.StatusConflict, "email already registered")
 		}
-		return writeError(c, http.StatusBadRequest, err.Error())
+		c.Logger().Errorf("auth: sign up: %v", err)
+		return writeError(c, http.StatusInternalServerError, "failed to sign up")
 	}
 
 	h.setSessionCookie(c, token, expiresAt)
@@ -124,7 +132,24 @@ func (h *AuthHandler) Me(c echo.Context) error {
 	if err != nil {
 		return writeError(c, http.StatusUnauthorized, "not logged in")
 	}
-	return c.JSON(http.StatusOK, user)
+
+	// 手段はアカウント画面の出し分けにしか使わない補助の情報なので、引けなくても /me は失敗させない。
+	// /me はフロントがログイン状態を確かめる入口で、ここで 500 にするとアプリ全体が使えなくなる。
+	// 省いたときフロントは「分からない」として、従来どおりパスワード変更の欄を出す
+	providers, err := h.service.Providers(c.Request().Context(), user.ID)
+	if err != nil {
+		c.Logger().Errorf("auth: list providers: %v", err)
+		providers = nil
+	}
+	return c.JSON(http.StatusOK, meResponse{User: *user, Providers: providers})
+}
+
+// meResponse は GET /api/auth/me の応答。domain.User にログインの手段を足す。
+// 手段を domain.User に入れないのは、ログイン・登録の応答やセッションの照合では引かないため
+// （毎回 user_identities を引くことになる）。
+type meResponse struct {
+	domain.User
+	Providers []string `json:"providers,omitempty"`
 }
 
 func (h *AuthHandler) setSessionCookie(c echo.Context, token string, expiresAt time.Time) {

@@ -28,7 +28,18 @@ export function AccountPage() {
         </button>
       </section>
 
-      <ChangePasswordSection />
+      {/* パスワードを持たない（Google だけで登録した）ユーザーに欄を出すと、送っても必ず失敗する。
+          providers が無いとき（分からない）は従来どおり出す */}
+      {user?.providers && !user.providers.includes('password') ? (
+        <section className="card elev-sm account-section">
+          <h5 className="shelf-h">パスワード</h5>
+          <p className="text-muted" style={{ fontSize: 12, margin: 0 }}>
+            Google アカウントでログインしているため、パスワードは設定されていません。
+          </p>
+        </section>
+      ) : (
+        <ChangePasswordSection />
+      )}
     </>
   )
 }

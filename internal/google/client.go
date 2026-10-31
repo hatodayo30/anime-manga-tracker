@@ -67,8 +67,9 @@ func NewClient(clientID, clientSecret, redirectURL string, opts ...Option) *Clie
 	return c
 }
 
-func (c *Client) AuthCodeURL(state string) string {
-	return c.conf.AuthCodeURL(state)
+// AuthCodeURL は PKCE（RFC 7636）の S256 で code_challenge を載せる。verifier そのものは URL に出さない。
+func (c *Client) AuthCodeURL(state, verifier string) string {
+	return c.conf.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))
 }
 
 // userinfoResponse は userinfo の応答のうち使う項目。
@@ -80,11 +81,11 @@ type userinfoResponse struct {
 
 // Profile はトークンの応答に入っている id_token を読まない。アクセストークンで userinfo を叩けば、
 // TLS で Google から直接受け取った値になるので、JWT の署名検証（鍵の取得・キャッシュ）が要らない。
-func (c *Client) Profile(ctx context.Context, code string) (*auth.GoogleProfile, error) {
+func (c *Client) Profile(ctx context.Context, code, verifier string) (*auth.GoogleProfile, error) {
 	// oauth2 は ctx に入れた http.Client でトークンの引き換えをする。入れないと http.DefaultClient
 	// （タイムアウト無し）になる
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
-	token, err := c.conf.Exchange(ctx, code)
+	token, err := c.conf.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, fmt.Errorf("google: exchange code: %w", err)
 	}

@@ -25,6 +25,8 @@ type fakeUserRepository struct {
 	findByIdentityFunc      func(ctx context.Context, provider, subject string) (*domain.User, error)
 	linkIdentityByEmailFunc func(ctx context.Context, email, provider, subject string) (*domain.User, error)
 	createWithIdentityFunc  func(ctx context.Context, email, provider, subject string) (*domain.User, error)
+	// Providers が返す値
+	providers []string
 	// 呼ばれた順のメソッド名
 	identityCalls []string
 
@@ -81,6 +83,10 @@ func (f *fakeUserRepository) CreateWithIdentity(ctx context.Context, email, prov
 		return nil, auth.ErrNotFound
 	}
 	return f.createWithIdentityFunc(ctx, email, provider, subject)
+}
+
+func (f *fakeUserRepository) Providers(ctx context.Context, userID int64) ([]string, error) {
+	return f.providers, nil
 }
 
 type fakeSessionRepository struct {
@@ -147,8 +153,10 @@ func TestService_SignUp_Validation(t *testing.T) {
 			s := auth.NewService(users, sessions)
 
 			_, _, _, err := s.SignUp(context.Background(), tt.email, tt.password)
-			if err == nil {
-				t.Fatal("expected validation error, got nil")
+			// InputError でなければ、ハンドラは入力の誤りではなくサーバーの失敗（500）として扱う
+			var inputErr *auth.InputError
+			if !errors.As(err, &inputErr) {
+				t.Fatalf("expected *auth.InputError, got %v", err)
 			}
 			if users.called {
 				t.Error("repository should not be called when validation fails")
