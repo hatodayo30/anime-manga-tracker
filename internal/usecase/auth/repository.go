@@ -54,6 +54,9 @@ type UserRepository interface {
 	// CreateWithIdentity はパスワードを持たないユーザーを、手段を紐付けた状態で作る。
 	// 2 つの表への書き込みを 1 つのトランザクションで行う。email が既に登録済みなら ErrEmailTaken を返す。
 	CreateWithIdentity(ctx context.Context, email, provider, subject string) (*domain.User, error)
+	// Providers は userID がログインに使える手段（ProviderPassword など）を名前順で返す。
+	// ユーザーがいなければ空のスライスを返す（エラーにはしない）。
+	Providers(ctx context.Context, userID int64) ([]string, error)
 }
 
 // SessionRepository は Service がセッションの永続化に必要とする操作を定義する。

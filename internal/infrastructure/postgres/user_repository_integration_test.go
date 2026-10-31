@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -305,6 +306,16 @@ func TestIntegration_LinkIdentityByEmail(t *testing.T) {
 	if _, err := users.FindByEmail(ctx, "user@example.com"); err != nil {
 		t.Errorf("password login should still work after link: %v", err)
 	}
+	// 紐付けた後は両方の手段が名前順で返る（/me がアカウント画面に渡す）
+	if got, err := users.Providers(ctx, pw.ID); err != nil || !slices.Equal(got, []string{"google", "password"}) {
+		t.Errorf("Providers after link = %v, %v; want [google password]", got, err)
+	}
+	if got, err := users.Providers(ctx, other.ID); err != nil || !slices.Equal(got, []string{"google"}) {
+		t.Errorf("Providers of google-only user = %v, %v; want [google]", got, err)
+	}
+	if got, err := users.Providers(ctx, pw.ID+1000); err != nil || len(got) != 0 {
+		t.Errorf("Providers of missing user = %v, %v; want empty", got, err)
+	}
 
 	if _, err := users.LinkIdentityByEmail(ctx, "user@example.com", auth.ProviderGoogle, "sub-2"); !errors.Is(err, auth.ErrIdentityTaken) {
 		t.Errorf("second Google account: expected ErrIdentityTaken, got %v", err)
@@ -352,14 +363,14 @@ func TestIntegration_Service_PasswordThenGoogle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
 	}
-	first, _, _, err := s.LoginWithGoogle(ctx, "code")
+	first, _, _, err := s.LoginWithGoogle(ctx, "code", "verifier")
 	if err != nil || first.ID != signed.ID {
 		t.Fatalf("first Google login = %+v, %v; want user %d", first, err, signed.ID)
 	}
 
 	// Google 側でメールアドレスが変わり、未確認になっても sub で同じアカウントに入る
 	google.profile = &auth.GoogleProfile{Subject: "sub-1", Email: "changed@example.com", EmailVerified: false}
-	second, _, _, err := s.LoginWithGoogle(ctx, "code")
+	second, _, _, err := s.LoginWithGoogle(ctx, "code", "verifier")
 	if err != nil || second.ID != signed.ID {
 		t.Fatalf("second Google login = %+v, %v; want user %d", second, err, signed.ID)
 	}
@@ -378,7 +389,7 @@ func TestIntegration_Service_GoogleOnlyCannotUsePassword(t *testing.T) {
 	google := &stubGoogle{profile: &auth.GoogleProfile{Subject: "sub-1", Email: "g@example.com", EmailVerified: true}}
 	s := auth.NewService(postgres.NewUserRepository(pool), postgres.NewSessionRepository(pool), auth.WithGoogle(google))
 
-	if _, _, _, err := s.LoginWithGoogle(ctx, "code"); err != nil {
+	if _, _, _, err := s.LoginWithGoogle(ctx, "code", "verifier"); err != nil {
 		t.Fatalf("LoginWithGoogle: %v", err)
 	}
 	if _, _, _, err := s.Login(ctx, "g@example.com", "any-password"); !errors.Is(err, auth.ErrInvalidCredentials) {
@@ -391,8 +402,8 @@ func TestIntegration_Service_GoogleOnlyCannotUsePassword(t *testing.T) {
 
 type stubGoogle struct{ profile *auth.GoogleProfile }
 
-func (g *stubGoogle) AuthCodeURL(state string) string { return "" }
+func (g *stubGoogle) AuthCodeURL(state, verifier string) string { return "" }
 
-func (g *stubGoogle) Profile(ctx context.Context, code string) (*auth.GoogleProfile, error) {
+func (g *stubGoogle) Profile(ctx context.Context, code, verifier string) (*auth.GoogleProfile, error) {
 	return g.profile, nil
 }

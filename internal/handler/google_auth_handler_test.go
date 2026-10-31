@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,14 +37,21 @@ func (s *googleSessions) Create(ctx context.Context, token string, userID int64,
 	return nil
 }
 
-type stubGoogle struct{ profileCalls int }
+type stubGoogle struct {
+	profileCalls int
+	// AuthCodeURL と Profile に渡された PKCE の verifier
+	authVerifier    string
+	profileVerifier string
+}
 
-func (g *stubGoogle) AuthCodeURL(state string) string {
+func (g *stubGoogle) AuthCodeURL(state, verifier string) string {
+	g.authVerifier = verifier
 	return "https://accounts.example/auth?" + url.Values{"state": {state}}.Encode()
 }
 
-func (g *stubGoogle) Profile(ctx context.Context, code string) (*auth.GoogleProfile, error) {
+func (g *stubGoogle) Profile(ctx context.Context, code, verifier string) (*auth.GoogleProfile, error) {
 	g.profileCalls++
+	g.profileVerifier = verifier
 	return &auth.GoogleProfile{Subject: "sub-1", Email: "user@example.com", EmailVerified: true}, nil
 }
 
@@ -79,7 +87,7 @@ func cookieNamed(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 // start は state を短命 Cookie に入れ、同じ state を付けて Google へ送る。Cookie はコールバックのパスにだけ届き、
 // HttpOnly で、Google からの別サイトの画面遷移でも送られるよう SameSite=Lax にする（Strict だと必ず不一致になる）。
 func TestGoogleStart_SetsStateCookieAndRedirects(t *testing.T) {
-	h, _, _ := newGoogleHandler(true)
+	h, g, _ := newGoogleHandler(true)
 
 	rec := serve(t, h.GoogleStart, "/api/auth/google/start")
 	if rec.Code != http.StatusFound {
@@ -89,9 +97,15 @@ func TestGoogleStart_SetsStateCookieAndRedirects(t *testing.T) {
 	if cookie == nil {
 		t.Fatal("state cookie is not set")
 	}
+	state, verifier, _ := strings.Cut(cookie.Value, ".")
 	loc, _ := url.Parse(rec.Header().Get("Location"))
-	if loc.Host != "accounts.example" || loc.Query().Get("state") != cookie.Value || len(cookie.Value) < 20 {
+	if loc.Host != "accounts.example" || loc.Query().Get("state") != state || len(state) < 20 {
 		t.Errorf("Location = %s, cookie = %q; want the same random state in both", loc, cookie.Value)
+	}
+	// PKCE の verifier は Cookie に入れてコールバックまで持ち回り、同意画面の URL を作るのにも同じものを使う。
+	// RFC 7636 の下限は 43 文字
+	if verifier == "" || verifier != g.authVerifier || len(verifier) < 43 {
+		t.Errorf("cookie verifier = %q, verifier for the URL = %q; want the same verifier of 43+ chars", verifier, g.authVerifier)
 	}
 	if cookie.Path != googleStateCookiePath || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
 		t.Errorf("cookie attributes = %+v", cookie)
@@ -112,6 +126,8 @@ func TestGoogleCallback_RejectsBadState(t *testing.T) {
 		{"no cookie", "/api/auth/google/callback?state=abc&code=c", nil},
 		{"mismatch", "/api/auth/google/callback?state=abc&code=c", []*http.Cookie{{Name: googleStateCookieName, Value: "xyz"}}},
 		{"empty state in both", "/api/auth/google/callback?state=&code=c", []*http.Cookie{{Name: googleStateCookieName, Value: ""}}},
+		// PKCE を入れる前に start した Cookie。引き換えは必ず失敗するので Google に問い合わせない
+		{"no verifier", "/api/auth/google/callback?state=abc&code=c", []*http.Cookie{{Name: googleStateCookieName, Value: "abc"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,9 +165,10 @@ func TestGoogleCallback_Cancelled(t *testing.T) {
 }
 
 // state が一致すれば、パスワードのログインと同じセッション Cookie を発行し、start で預けた next へ戻す。
+// 引き換えには Cookie に預けた PKCE の verifier を渡す。
 func TestGoogleCallback_SuccessRedirectsToNext(t *testing.T) {
-	h, _, sessions := newGoogleHandler(false)
-	state := "abc" + "." + base64.RawURLEncoding.EncodeToString([]byte("/library?type=manga"))
+	h, g, sessions := newGoogleHandler(false)
+	state := "abc.the-verifier." + base64.RawURLEncoding.EncodeToString([]byte("/library?type=manga"))
 
 	rec := serve(t, h.GoogleCallback, "/api/auth/google/callback?state=abc&code=c",
 		&http.Cookie{Name: googleStateCookieName, Value: state})
@@ -160,6 +177,9 @@ func TestGoogleCallback_SuccessRedirectsToNext(t *testing.T) {
 	}
 	if sessions.created != 1 {
 		t.Errorf("sessions created = %d, want 1", sessions.created)
+	}
+	if g.profileVerifier != "the-verifier" {
+		t.Errorf("verifier passed to Google = %q, want the-verifier", g.profileVerifier)
 	}
 	if c := cookieNamed(rec, middleware.SessionCookieName); c == nil || c.Value == "" || !c.HttpOnly {
 		t.Errorf("session cookie = %+v", c)
@@ -171,7 +191,7 @@ func TestGoogleCallback_SuccessRedirectsToNext(t *testing.T) {
 func TestGoogleCallback_IgnoresUnsafeNext(t *testing.T) {
 	for _, next := range []string{"//evil.example", "/\\evil.example", "https://evil.example", "/a\r\nSet-Cookie: x=y"} {
 		h, _, _ := newGoogleHandler(false)
-		value := "abc." + base64.RawURLEncoding.EncodeToString([]byte(next))
+		value := "abc.the-verifier." + base64.RawURLEncoding.EncodeToString([]byte(next))
 
 		rec := serve(t, h.GoogleCallback, "/api/auth/google/callback?state=abc&code=c",
 			&http.Cookie{Name: googleStateCookieName, Value: value})

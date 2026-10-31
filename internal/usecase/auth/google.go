@@ -24,12 +24,14 @@ type GoogleProfile struct {
 
 // GoogleGateway は Google の認可コードフローのうち、Google と通信する部分。実装は internal/google が提供する。
 type GoogleGateway interface {
-	// AuthCodeURL は利用者を送る Google の同意画面の URL を返す。state はそのまま付けて返ってくる
-	AuthCodeURL(state string) string
-	// Profile は認可コードをアクセストークンに引き換え、userinfo を引いて返す。
+	// AuthCodeURL は利用者を送る Google の同意画面の URL を返す。state はそのまま付けて返ってくる。
+	// verifier は PKCE の code_verifier で、URL にはそのハッシュ（code_challenge）だけを載せる
+	AuthCodeURL(state, verifier string) string
+	// Profile は認可コードをアクセストークンに引き換え、userinfo を引いて返す。引き換えには
+	// AuthCodeURL に渡したのと同じ verifier が要る。
 	// id_token は検証せずに捨てる。TLS で Google から直接受け取ったアクセストークンで userinfo を叩けば、
 	// 返ってきた値は Google が答えたものだと言えるため（BACKLOG 8-b）
-	Profile(ctx context.Context, code string) (*GoogleProfile, error)
+	Profile(ctx context.Context, code, verifier string) (*GoogleProfile, error)
 }
 
 // GoogleEnabled は Google ログインが使えるかどうか。フロントはこれでボタンを出し分ける。
@@ -37,13 +39,13 @@ func (s *Service) GoogleEnabled() bool {
 	return s.google != nil
 }
 
-// GoogleAuthURL は state を付けた Google の同意画面の URL を返す。
-// state の生成と照合（短命 Cookie）は HTTP の関心事なのでハンドラが持つ。
-func (s *Service) GoogleAuthURL(state string) (string, error) {
+// GoogleAuthURL は state と PKCE の verifier を付けた Google の同意画面の URL を返す。
+// state と verifier の生成と保管（短命 Cookie）は HTTP の関心事なのでハンドラが持つ。
+func (s *Service) GoogleAuthURL(state, verifier string) (string, error) {
 	if s.google == nil {
 		return "", ErrGoogleDisabled
 	}
-	return s.google.AuthCodeURL(state), nil
+	return s.google.AuthCodeURL(state, verifier), nil
 }
 
 // LoginWithGoogle は Google から戻ってきた認可コードでログインし、パスワードのログインと同じセッションを発行する。
@@ -60,11 +62,11 @@ func (s *Service) GoogleAuthURL(state string) (string, error) {
 // 名乗る Google アカウントでその人のアカウントに入れてしまう。新規作成（4）でも断るのは、他人のメールアドレスで
 // 先に作っておくと、本人がメールアドレスで登録しようとしたときに 409 で弾かれるうえ、本人が後から
 // Google で入ったときに 3 で乗っ取った側のアカウントに紐付いてしまうため。
-func (s *Service) LoginWithGoogle(ctx context.Context, code string) (*domain.User, string, time.Time, error) {
+func (s *Service) LoginWithGoogle(ctx context.Context, code, verifier string) (*domain.User, string, time.Time, error) {
 	if s.google == nil {
 		return nil, "", time.Time{}, ErrGoogleDisabled
 	}
-	profile, err := s.google.Profile(ctx, code)
+	profile, err := s.google.Profile(ctx, code, verifier)
 	if err != nil {
 		return nil, "", time.Time{}, err
 	}

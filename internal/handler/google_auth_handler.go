@@ -46,16 +46,18 @@ func (h *AuthHandler) Providers(c echo.Context) error {
 
 // GoogleStart handles GET /api/auth/google/start — state を Cookie に入れて Google の同意画面へ送る。
 // ?next= はログイン後に戻る画面で、state と一緒に Cookie に入れておく（Google を経由すると URL の情報は消える）。
+// Cookie の中身は "<state>.<verifier>" か "<state>.<verifier>.<base64url(next)>"。どれも "." を含まない。
 //
 // fetch ではなくブラウザの画面遷移で来るので、エラーも JSON ではなくログイン画面へのリダイレクトで返す。
 func (h *AuthHandler) GoogleStart(c echo.Context) error {
 	state := rand.Text() // crypto/rand の 128 ビット
-	authURL, err := h.service.GoogleAuthURL(state)
+	verifier := newPKCEVerifier()
+	authURL, err := h.service.GoogleAuthURL(state, verifier)
 	if err != nil {
 		return redirectToLoginWithError(c, googleErrDisabled)
 	}
 
-	value := state
+	value := state + "." + verifier
 	if next := safeRedirectPath(c.QueryParam("next")); next != "" {
 		value += "." + base64.RawURLEncoding.EncodeToString([]byte(next))
 	}
@@ -79,9 +81,15 @@ func (h *AuthHandler) GoogleCallback(c echo.Context) error {
 	if cookieErr != nil {
 		return redirectToLoginWithError(c, googleErrState)
 	}
-	state, encodedNext, _ := strings.Cut(cookie.Value, ".")
+	state, rest, _ := strings.Cut(cookie.Value, ".")
+	verifier, encodedNext, _ := strings.Cut(rest, ".")
 	got := c.QueryParam("state")
 	if state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(got)) != 1 {
+		return redirectToLoginWithError(c, googleErrState)
+	}
+	// verifier の無い Cookie は PKCE を入れる前に start したもの（寿命は 10 分）。引き換えは必ず失敗するので
+	// Google に問い合わせず、state の不一致と同じく「もう一度押してください」に倒す
+	if verifier == "" {
 		return redirectToLoginWithError(c, googleErrState)
 	}
 
@@ -90,7 +98,7 @@ func (h *AuthHandler) GoogleCallback(c echo.Context) error {
 		return redirectToLoginWithError(c, googleErrFailed)
 	}
 
-	_, token, expiresAt, err := h.service.LoginWithGoogle(c.Request().Context(), code)
+	_, token, expiresAt, err := h.service.LoginWithGoogle(c.Request().Context(), code, verifier)
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrGoogleDisabled):
@@ -128,6 +136,19 @@ func (h *AuthHandler) setGoogleStateCookie(c echo.Context, value string, maxAge 
 		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// newPKCEVerifier は PKCE（RFC 7636）の code_verifier を作る。crypto/rand の 32 バイトを base64url にした
+// 43 文字で、oauth2.GenerateVerifier と同じ作り方（RFC が求める 43〜128 文字の下限）。
+//
+// PKCE を足すのは、認可コードが途中で漏れた（ブラウザの履歴・プロキシのログ・Referer など）ときに、
+// それだけではトークンに引き換えられないようにするため。クライアントシークレットはサーバーにしか無いので
+// 今の構成でも引き換えはできないが、verifier は 1 回のログインごとに変わり、シークレットが漏れた場合の守りにもなる。
+// ハンドラで作るのは、state と同じ Cookie に入れて持ち回るため（oauth2 への依存は internal/google に閉じておく）。
+func newPKCEVerifier() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b) // Go 1.24 以降の crypto/rand.Read は失敗しない（失敗すればプロセスが落ちる）
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func redirectToLoginWithError(c echo.Context, reason string) error {

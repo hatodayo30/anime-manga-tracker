@@ -91,7 +91,7 @@ func NewService(users UserRepository, sessions SessionRepository, opts ...Option
 func (s *Service) SignUp(ctx context.Context, email, password string) (*domain.User, string, time.Time, error) {
 	email = normalizeEmail(email)
 	if email == "" || !strings.Contains(email, "@") {
-		return nil, "", time.Time{}, fmt.Errorf("invalid email")
+		return nil, "", time.Time{}, &InputError{"invalid email"}
 	}
 	if err := validatePassword(password); err != nil {
 		return nil, "", time.Time{}, err
@@ -188,6 +188,11 @@ func (s *Service) CurrentUser(ctx context.Context, token string) (*domain.User, 
 		return nil, ErrNotFound
 	}
 	return s.sessions.FindUser(ctx, hashToken(token))
+}
+
+// Providers は userID がログインに使える手段（ProviderPassword / ProviderGoogle）を返す。
+func (s *Service) Providers(ctx context.Context, userID int64) ([]string, error) {
+	return s.users.Providers(ctx, userID)
 }
 
 // createSession はセッションを作り、Cookie に入れる平文のトークンを返す。DB に残すのはハッシュだけ。

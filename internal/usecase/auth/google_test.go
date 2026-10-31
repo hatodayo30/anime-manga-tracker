@@ -14,16 +14,18 @@ import (
 type fakeGoogle struct {
 	profile *auth.GoogleProfile
 	err     error
-	// Profile に渡された認可コード
-	gotCode string
+	// Profile に渡された認可コードと PKCE の verifier
+	gotCode     string
+	gotVerifier string
 }
 
-func (f *fakeGoogle) AuthCodeURL(state string) string {
+func (f *fakeGoogle) AuthCodeURL(state, verifier string) string {
 	return "https://accounts.example/auth?state=" + state
 }
 
-func (f *fakeGoogle) Profile(ctx context.Context, code string) (*auth.GoogleProfile, error) {
+func (f *fakeGoogle) Profile(ctx context.Context, code, verifier string) (*auth.GoogleProfile, error) {
 	f.gotCode = code
+	f.gotVerifier = verifier
 	return f.profile, f.err
 }
 
@@ -46,10 +48,10 @@ func TestService_Google_Disabled(t *testing.T) {
 	if s.GoogleEnabled() {
 		t.Error("GoogleEnabled = true without WithGoogle")
 	}
-	if _, err := s.GoogleAuthURL("state"); !errors.Is(err, auth.ErrGoogleDisabled) {
+	if _, err := s.GoogleAuthURL("state", "verifier"); !errors.Is(err, auth.ErrGoogleDisabled) {
 		t.Errorf("GoogleAuthURL: expected ErrGoogleDisabled, got %v", err)
 	}
-	if _, _, _, err := s.LoginWithGoogle(context.Background(), "code"); !errors.Is(err, auth.ErrGoogleDisabled) {
+	if _, _, _, err := s.LoginWithGoogle(context.Background(), "code", "the-verifier"); !errors.Is(err, auth.ErrGoogleDisabled) {
 		t.Errorf("LoginWithGoogle: expected ErrGoogleDisabled, got %v", err)
 	}
 	if len(users.identityCalls) != 0 {
@@ -72,12 +74,13 @@ func TestService_LoginWithGoogle_ExistingIdentityMatchedBySubOnly(t *testing.T) 
 	var sessionFor int64
 	s := auth.NewService(users, sessionRecorder(&sessionFor), auth.WithGoogle(google))
 
-	user, token, _, err := s.LoginWithGoogle(context.Background(), "the-code")
+	user, token, _, err := s.LoginWithGoogle(context.Background(), "the-code", "the-verifier")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if google.gotCode != "the-code" {
-		t.Errorf("code passed to Google = %q, want %q", google.gotCode, "the-code")
+	// 引き換えには start で作った PKCE の verifier をそのまま渡す。違えば Google が断る
+	if google.gotCode != "the-code" || google.gotVerifier != "the-verifier" {
+		t.Errorf("passed to Google: code %q, verifier %q; want the-code, the-verifier", google.gotCode, google.gotVerifier)
 	}
 	if user.ID != 7 || sessionFor != 7 || token == "" {
 		t.Errorf("user = %d, session for %d, token %q; want user 7 with a session", user.ID, sessionFor, token)
@@ -96,7 +99,7 @@ func TestService_LoginWithGoogle_UnverifiedEmailRejectedOnFirstLogin(t *testing.
 	var sessionFor int64
 	s := auth.NewService(users, sessionRecorder(&sessionFor), auth.WithGoogle(google))
 
-	_, _, _, err := s.LoginWithGoogle(context.Background(), "code")
+	_, _, _, err := s.LoginWithGoogle(context.Background(), "code", "the-verifier")
 	if !errors.Is(err, auth.ErrGoogleEmailUnverified) {
 		t.Fatalf("expected ErrGoogleEmailUnverified, got %v", err)
 	}
@@ -123,7 +126,7 @@ func TestService_LoginWithGoogle_LinksToExistingUserByVerifiedEmail(t *testing.T
 	var sessionFor int64
 	s := auth.NewService(users, sessionRecorder(&sessionFor), auth.WithGoogle(google))
 
-	user, _, _, err := s.LoginWithGoogle(context.Background(), "code")
+	user, _, _, err := s.LoginWithGoogle(context.Background(), "code", "the-verifier")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +152,7 @@ func TestService_LoginWithGoogle_CreatesUserWhenNoneMatches(t *testing.T) {
 	var sessionFor int64
 	s := auth.NewService(users, sessionRecorder(&sessionFor), auth.WithGoogle(google))
 
-	user, _, _, err := s.LoginWithGoogle(context.Background(), "code")
+	user, _, _, err := s.LoginWithGoogle(context.Background(), "code", "the-verifier")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +176,7 @@ func TestService_LoginWithGoogle_UserAlreadyHasAnotherGoogleAccount(t *testing.T
 	var sessionFor int64
 	s := auth.NewService(users, sessionRecorder(&sessionFor), auth.WithGoogle(google))
 
-	_, _, _, err := s.LoginWithGoogle(context.Background(), "code")
+	_, _, _, err := s.LoginWithGoogle(context.Background(), "code", "the-verifier")
 	if !errors.Is(err, auth.ErrIdentityTaken) {
 		t.Fatalf("expected ErrIdentityTaken, got %v", err)
 	}
@@ -191,7 +194,7 @@ func TestService_LoginWithGoogle_GatewayError(t *testing.T) {
 	users := &fakeUserRepository{}
 	s := auth.NewService(users, &fakeSessionRepository{}, auth.WithGoogle(&fakeGoogle{err: gatewayErr}))
 
-	_, _, _, err := s.LoginWithGoogle(context.Background(), "code")
+	_, _, _, err := s.LoginWithGoogle(context.Background(), "code", "the-verifier")
 	if !errors.Is(err, gatewayErr) {
 		t.Fatalf("expected gateway error, got %v", err)
 	}

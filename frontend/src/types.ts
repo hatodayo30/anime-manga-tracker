@@ -4,6 +4,9 @@ export interface Me {
   id: number
   email: string
   createdAt: string
+  // ログインに使える手段（'password' / 'google'）。GET /api/auth/me だけが返す。
+  // ログイン・登録の応答と、サーバーが引けなかったときは無い（「分からない」として扱う）
+  providers?: string[]
 }
 
 // GET /api/records の各要素。nextAiringAtはサーバーでRFC3339文字列として返る。
