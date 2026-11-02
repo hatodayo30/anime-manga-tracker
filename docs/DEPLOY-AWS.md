@@ -602,6 +602,8 @@ aws ecs create-service \
   （後から付ける場合は `update-service` のうえで新しいデプロイを起こす必要がある）。
 - **`deploymentCircuitBreaker`** — 新しいタスクが起動に失敗し続けたら自動で前のバージョンに戻す。
   壊れたイメージを push したときに延々とリトライし続けるのを止めてくれる。
+  **ただしマイグレーションを含むデプロイでは、戻った先の古いイメージが新しいスキーマの上で動いてしまう**
+  （運用の「[マイグレーションを含むデプロイ](#マイグレーションを含むデプロイ)」で一時的に切る）。
 
 ### 10-3. 起動を待つ
 
@@ -704,6 +706,86 @@ aws ecs describe-task-definition --task-definition \
 > セキュリティ対応（レート制限・入力上限・エラー詳細の非表示・非 root 実行）がまるごと
 > 本番に載っておらず、ECS はそれでも正常に動くので気付けない。出力のタグが
 > `git rev-parse --short main` と一致しなければ、デプロイはできていない。
+
+### マイグレーションを含むデプロイ
+
+`migrations/` に未適用のファイルがあるデプロイ（`git diff --stat <今のタグ> main -- migrations/` に `.up.sql` が出る）は、
+上の手順に入る前と後に次を足す。
+
+**なぜ要るか（2026-11-02 にコードで確かめた）。** マイグレーションは新しいタスクの起動時に適用され、自動では戻らない。
+一方、サービスの `deploymentCircuitBreaker` は `rollback=true` なので、新しいタスクがマイグレーションを COMMIT した**後で**
+ヘルスチェックに落ち続けると、ECS は前のリビジョンに自動で戻す。
+
+- 古いイメージのランナー（`internal/infrastructure/postgres/migrate.go`）は、自分が知らない番号の適用記録を無視して
+  `migrate: already up to date` で**普通に起動する**。スキーマの食い違いは起動時には検出されない
+- 例: 0006（`sessions.token` → `token_hash`）と 0007（`users.password_hash` を削除）の後に `75d2102` へ戻ると、
+  ログインと新規登録は SQL エラー（42703）で 400、ログイン中の確認は 401 になる。**サービスは正常に見えるのに、誰もログインできない**
+- マイグレーションは 1 ファイルずつトランザクションで包まれている。0006 が COMMIT された後に 0007 で失敗すると、
+  DB は 0006 だけ適用された状態で残る
+
+**前にやること**
+
+```bash
+# 1. RDS の手動スナップショット（必須）。完了まで待つ
+aws rds create-db-snapshot --db-instance-identifier amt-db \
+  --db-snapshot-identifier amt-db-before-$(git rev-parse --short main)
+aws rds wait db-snapshot-available --db-snapshot-identifier amt-db-before-$(git rev-parse --short main)
+
+# 2. 今のリビジョン番号を控える（戻すときに使う）
+aws ecs describe-services --cluster amt-cluster --services amt-service \
+  --query 'services[0].taskDefinition' --output text
+
+# 3. 自動ロールバックを切る。失敗したら 503 で止まり、壊れていることがすぐ分かる
+aws ecs update-service --cluster amt-cluster --service amt-service \
+  --deployment-configuration "minimumHealthyPercent=0,maximumPercent=100,deploymentCircuitBreaker={enable=true,rollback=false}"
+
+# 4. （任意）DB に繋がる経路を先に確かめておく。いざ戻すときに準備から始めると障害が長引く
+bash deploy/run-sql.sh deploy/sql/check-migrations.sql
+```
+
+**後にやること**
+
+```bash
+# 動いているイメージのタグ（上の手順の最後の確認）と、マイグレーションが適用されたことを確かめる
+aws logs tail /ecs/anime-manga-tracker --since 10m | grep 'migrate:'
+# migrate: applied 0006_hash_session_tokens.up.sql
+# migrate: applied 0007_user_identities.up.sql
+
+# 自動ロールバックを戻す
+aws ecs update-service --cluster amt-cluster --service amt-service \
+  --deployment-configuration "minimumHealthyPercent=0,maximumPercent=100,deploymentCircuitBreaker={enable=true,rollback=true}"
+```
+
+> **`rollback=false` の間に失敗したら、基本は新しいイメージを直して前に進む。** 新しいイメージは新しいスキーマで正しく動く。
+> どうしても古いイメージに戻すときだけ、次の「マイグレーションを含むデプロイを戻す」に進む。
+
+### マイグレーションを含むデプロイを戻す
+
+**古いリビジョンに戻す前に、必ず DB を巻き戻す。** 順番を逆にすると、上に書いた「正常に見えるのに誰もログインできない」状態に
+自分から入る。ランナーは `.down.sql` を流さないので、`deploy/run-sql.sh`（次の「DB に SQL を流す」）で手で流す。
+
+```bash
+# 1. DB を巻き戻す（0006 / 0007 の場合。他のマイグレーションなら、同じ形の SQL を deploy/sql/ に作る）
+bash deploy/run-sql.sh deploy/sql/rollback-0007-0006.sql
+#   exitCode 0 と、applied_migrations が 1〜5 だけになったことを確かめる
+
+# 2. 控えておいたリビジョンに戻す
+aws ecs update-service --cluster amt-cluster --service amt-service \
+  --task-definition anime-manga-tracker:<控えた番号>
+aws ecs wait services-stable --cluster amt-cluster --services amt-service
+```
+
+- **`rollback-0007-0006.sql` で失うもの**: すべてのセッション（全員ログインし直し）と Google の紐付け。
+  パスワードのハッシュと記録は失わない。Google だけで登録したユーザーはパスワードが空文字になり、古いイメージではログインできない
+- **`applied_migrations` から 6・7 の行も消している。** 消さないと、後で新しいイメージを再デプロイしたときに
+  ランナーが適用済みとみなして流さない
+- 再び新しいイメージに進めると 0006 / 0007 が再適用され、Google だけのユーザーは次の Google ログインで同じメールアドレスの
+  アカウントに紐付き直る。ただし空のハッシュのまま `password` の行ができるので、アカウント画面にパスワード変更の欄が出る
+  （変更はできない）。気になるなら `DELETE FROM user_identities WHERE provider = 'password' AND password_hash = ''` を流す
+- **スナップショットからの復元は最後の手段。** スナップショット以降の書き込み（記録）がすべて失われ、
+  新しいインスタンスになるので `DATABASE_URL` の SSM も書き換えになる
+- `rollback-0007-0006.sql` はローカルの使い捨て DB で、up → down → 二重の down（失敗して何も変わらない）を確かめた（2026-11-02）。
+  本番ではまだ流していない
 
 ### AI（Claude）の API キーを入れる（一度だけ）
 
@@ -809,6 +891,63 @@ aws logs tail /ecs/anime-manga-tracker --since 5m | grep -E 'rakuten|new-release
   - `429 Too Many Requests`: 楽天のレート制限。間隔（`rakuten.minRequestInterval`、1.5 秒）を広げる。
     2026-10-25 にちょうど 1 秒間隔で 429 になったので 1.5 秒にした
 
+### Google ログインを有効にする（一度だけ）
+
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URL` の 3 つが揃うと有効になる。1 つでも欠けていれば
+アプリは動き（起動ログに `google login: disabled (...)`）、`GET /api/auth/providers` が `{"google":false}` を返して
+ログイン画面に Google のボタンが出ないだけ（BACKLOG 8-b）。**Google 認証のコード（PR #62・#63）を含むイメージが要る。**
+それより前のイメージに環境変数を入れても何も起きない。初回は 0006 / 0007 を含むので「マイグレーションを含むデプロイ」に従う。
+
+**Google Cloud Console（Google Auth Platform）で先にやること**
+
+- **クライアント**（ウェブ アプリケーション）の承認済みリダイレクト URI に `https://mirokuapp.com/api/auth/google/callback`。
+  完全一致が要る。`www` は ALB が apex に 301 で揃えるので登録しなくてよい（BACKLOG 8-b）
+- **ブランディング**: アプリ名・ユーザー サポートメール・ホームページ `https://mirokuapp.com`・
+  プライバシーポリシー `https://mirokuapp.com/privacy`・承認済みドメイン `mirokuapp.com`・デベロッパーの連絡先。
+  **ロゴは載せない**（Google のブランド確認の対象になり、審査待ちになる）。利用規約は任意
+- **対象**: 「アプリを公開」で本番にする。プライバシーポリシーの URL が無いと押せない。`/privacy` を含むイメージを
+  デプロイしてから押す。「テスト中」のままだと、登録したテストユーザー以外は Google 側の「アクセスをブロック」で止まる
+
+```bash
+# 履歴にシークレットを残さないよう、ファイル経由で入れる
+aws ssm put-parameter --name /amt/prod/GOOGLE_CLIENT_SECRET --type SecureString \
+  --value "$(cat /tmp/google-client-secret.txt)"
+rm /tmp/google-client-secret.txt
+
+export GOOGLE_CLIENT_ID=<クライアント ID>
+
+# 「新しいバージョンをデプロイする」の jq に、environment と secrets の追加を足す（何度流しても重複しない）。
+# イメージの差し替えと同時に行えば、デプロイは 1 回で済む
+aws ecs describe-task-definition --task-definition anime-manga-tracker \
+  --query 'taskDefinition' --output json \
+  | jq --arg img "${ECR_REPO}:${TAG}" --arg cid "$GOOGLE_CLIENT_ID" \
+       --arg arn "arn:aws:ssm:${AWS_REGION}:${ACCOUNT_ID}:parameter/amt/prod/GOOGLE_CLIENT_SECRET" '
+      del(.taskDefinitionArn,.revision,.status,.requiresAttributes,
+          .compatibilities,.registeredAt,.registeredBy,.deregisteredAt)
+      | .containerDefinitions[0].image = $img
+      | .containerDefinitions[0].environment |=
+          ( map(select(.name != "GOOGLE_CLIENT_ID" and .name != "GOOGLE_REDIRECT_URL"))
+            + [{name:"GOOGLE_CLIENT_ID",value:$cid},
+               {name:"GOOGLE_REDIRECT_URL",value:"https://mirokuapp.com/api/auth/google/callback"}] )
+      | .containerDefinitions[0].secrets |=
+          ( map(select(.name != "GOOGLE_CLIENT_SECRET"))
+            + [{name:"GOOGLE_CLIENT_SECRET",valueFrom:$arn}] )
+    ' > /tmp/amt-taskdef.json
+jq '.containerDefinitions[0] | {image, environment, secrets}' /tmp/amt-taskdef.json
+aws ecs register-task-definition --cli-input-json file:///tmp/amt-taskdef.json
+# 以降は「新しいバージョンをデプロイする」の update-service から。最後のタグの確認も省かない
+
+aws logs tail /ecs/anime-manga-tracker --since 5m | grep 'google login'
+# google login: enabled (redirect https://mirokuapp.com/api/auth/google/callback)
+curl -s https://mirokuapp.com/api/auth/providers
+# {"google":true}
+```
+
+- **IAM の変更は要らない。** Step 6-1 のインラインポリシーが `parameter/amt/prod/*` を許可している
+- **シークレットだけ `secrets`、クライアント ID とリダイレクト先は `environment`。** クライアント ID は同意画面の URL に
+  載って誰でも見られるので秘密ではない
+- 最後にブラウザで、パスワードのログイン（0007 で `user_identities` に移った既存ユーザー）と、Google のログインの両方を確かめる
+
 ### 実行中のコンテナに入る（ECS Exec）
 
 ```bash
@@ -828,8 +967,62 @@ aws ecs execute-command --cluster amt-cluster --task $TASK_ARN \
 > このユーザーになり、パッケージを入れる権限がない（以前の手順にあった
 > `apk add --no-cache postgresql-client` は失敗するはず。本番では未確認）。
 > 非 root はコンテナを乗っ取られたときの被害を減らすための判断なので、これを戻して解決しないこと。
-> DB を直接見る必要が出たら、`psql` 入りのイメージで一時タスクを起動する方法を、
-> そのとき検討する。
+> DB を直接見るときは、次の「DB に SQL を流す（amt-psql）」を使う。
+
+### DB に SQL を流す（amt-psql）
+
+RDS はパブリックアクセスが無く、SG はアプリのタスクの SG からの 5432 しか通さないので、手元の Mac からは繋がらない。
+アプリのイメージには `psql` が無い（上の ECS Exec の注記）。そこで、**`psql` 入りのイメージで 1 回だけ動くタスク**を
+アプリと同じサブネット・SG で `run-task` し、SQL を流して終わらせる。結果は CloudWatch Logs に出る。
+
+**タスク定義を登録する（一度だけ）**
+
+```bash
+cat > /tmp/amt-psql-taskdef.json <<EOF
+{
+  "family": "amt-psql",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "256",
+  "memory": "512",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "arn:aws:iam::${ACCOUNT_ID}:role/amtEcsTaskExecutionRole",
+  "containerDefinitions": [{
+    "name": "psql",
+    "image": "public.ecr.aws/docker/library/postgres:16-alpine",
+    "essential": true,
+    "entryPoint": ["sh", "-c"],
+    "command": ["printf '%s' \"\$SQL_B64\" | base64 -d > /tmp/run.sql && psql \"\$DATABASE_URL\" -X -a -v ON_ERROR_STOP=1 --single-transaction -f /tmp/run.sql"],
+    "secrets": [{ "name": "DATABASE_URL", "valueFrom": "arn:aws:ssm:${AWS_REGION}:${ACCOUNT_ID}:parameter/amt/prod/DATABASE_URL" }],
+    "logConfiguration": { "logDriver": "awslogs", "options": {
+      "awslogs-group": "/ecs/anime-manga-tracker", "awslogs-region": "${AWS_REGION}", "awslogs-stream-prefix": "psql" } }
+  }]
+}
+EOF
+jq . /tmp/amt-psql-taskdef.json   # JSON として壊れていないこと、$SQL_B64 / $DATABASE_URL が展開されずに残っていること
+aws ecs register-task-definition --cli-input-json file:///tmp/amt-psql-taskdef.json
+```
+
+**SQL を流す**
+
+```bash
+bash deploy/run-sql.sh deploy/sql/check-migrations.sql
+```
+
+`deploy/run-sql.sh` は、流す SQL を表示して `y` の確認を求め、`run-task` → 終了を待つ → 終了コードとログを表示する。
+サブネットと SG は実行のたびに `amt-service` から引く。
+
+- **SQL は `--single-transaction` と `ON_ERROR_STOP=1` で流れる。** どこかで失敗すればファイル全体が巻き戻る。
+  ファイルに `BEGIN` / `COMMIT` は書かない
+- **`-a` で流した SQL もログに出る。** 何を流したかが CloudWatch に残る
+- **SQL は base64 にして環境変数で渡している。** `--overrides` の JSON とシェルのクォートが二重になって壊れるのを避けるため
+- **イメージは ECR Public の `postgres:16-alpine`**（Docker Hub の公式イメージの複製）。Docker Hub の匿名プルの回数制限を避ける。
+  RDS と同じメジャーバージョン（16）にしている
+- `deploy/sql/check-migrations.sql` は読み取りだけ。適用済みのマイグレーションと、`sessions` / `users` の列（0006 / 0007 の
+  前後で変わる）を出す。デプロイの前後どちらでもエラーにならない
+- 料金は動いている数十秒分だけ。IAM の変更は要らない（実行ロールとログの出力先はアプリと同じ）
+- タスク定義と同じイメージ・同じコマンドをローカルの Docker で動かし、使い捨ての DB に `check-migrations.sql` が流れることは
+  確かめた（2026-11-02）。**AWS 上ではまだ動かしていない**
 
 ### 費用を止める（しばらく触らないとき）
 
