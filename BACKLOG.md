@@ -725,7 +725,12 @@ CI・Dockerfile の Go 1.25 のまま使える版に留めた）。
     `BACKEND_PORT` を付けて起動する必要があった。いまは `npm run dev` だけで `/api` が Go に届く
 - **本番の設定がまだ。** Google Cloud Console で OAuth クライアントを作り、`https://<ドメイン>/api/auth/google/callback` を
   登録する。`GOOGLE_CLIENT_SECRET` は SSM、`GOOGLE_CLIENT_ID` / `GOOGLE_REDIRECT_URL` はタスク定義の `environment`。
-  `docs/DEPLOY-AWS*.md` にはまだ手順を書いていない
+  手順は `docs/DEPLOY-AWS.md` の「Google ログインを有効にする（一度だけ）」（2026-11-02）
+  - **初回のデプロイは 0006 / 0007 を含む。** 古いイメージに戻すと、起動は成功するのに誰もログインできなくなる
+    （古いランナーは未知の適用記録を無視して起動し、古いコードは `users.password_hash` / `sessions.token` を引く）。
+    サービスの自動ロールバック（`rollback=true`）がまさにこの状態に戻すので、デプロイの間だけ切る。
+    戻すときは `deploy/sql/rollback-0007-0006.sql` を `deploy/run-sql.sh` で流してから。
+    手順は `docs/DEPLOY-AWS.md` の「マイグレーションを含むデプロイ」「〜を戻す」「DB に SQL を流す（amt-psql）」
   - 本番の URI は `https://mirokuapp.com/api/auth/google/callback` の 1 本だけでよい。ALB の 80 / 443 の両リスナーに
     `www.mirokuapp.com` → apex の 301 ルールがあり（2026-10-31 に `describe-rules` と `curl` で確認）、`www` で来た人も
     アプリに届く前に apex に揃うので、state の Cookie（ホスト限定）がコールバックで届かない問題は起きない
