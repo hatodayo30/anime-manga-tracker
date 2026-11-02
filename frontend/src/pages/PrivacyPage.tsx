@@ -1,9 +1,8 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 
-// 削除の依頼・問い合わせの窓口。公開ページに載るので、個人のアドレスではなくこのアプリ専用のものにする。
-// TODO: 専用アドレスを用意したら差し替える。仮の値のままマージしないこと（PR は Draft にしてある）。
-const CONTACT_EMAIL = 'REPLACE_ME@example.com'
+// 削除の依頼・問い合わせの窓口。公開ページに載るので、個人のアドレスではなくこのアプリ専用のものにしている。
+const CONTACT_EMAIL = 'mirokuapp.contact@gmail.com'
 
 // 制定日・改定日。内容を変えたら更新する
 const UPDATED_ON = '2026年11月2日'
