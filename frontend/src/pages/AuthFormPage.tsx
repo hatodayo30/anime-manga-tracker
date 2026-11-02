@@ -161,6 +161,10 @@ export function AuthFormPage({ mode }: { mode: 'login' | 'signup' }) {
         <p className="text-muted" style={{ fontSize: 13, textAlign: 'center', margin: 0 }}>
           {copy.switchText} <Link to={copy.switchTo}>{copy.switchLabel}</Link>
         </p>
+        {/* 登録・ログインの前に、何を預けるのかを確かめられるようにする */}
+        <p className="text-muted" style={{ fontSize: 12, textAlign: 'center', margin: 0 }}>
+          <Link to="/privacy">プライバシーポリシー</Link>
+        </p>
       </div>
 
       {showOnboarding && (

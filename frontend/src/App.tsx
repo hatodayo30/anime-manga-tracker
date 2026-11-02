@@ -6,18 +6,21 @@ import { AuthFormPage } from './pages/AuthFormPage'
 import { HomePage } from './pages/HomePage'
 import { LibraryPage } from './pages/LibraryPage'
 import { NewArrivalsPage } from './pages/NewArrivalsPage'
+import { PrivacyPage } from './pages/PrivacyPage'
 import { RecommendPage } from './pages/RecommendPage'
 import { SearchPage } from './pages/SearchPage'
 import { SeasonPage } from './pages/SeasonPage'
 
-// ログイン画面とサインアップ画面以外はすべてログイン必須。アプリを開いたら必ずログイン画面に
+// ログイン画面・サインアップ画面・プライバシーポリシー以外はすべてログイン必須。アプリを開いたら必ずログイン画面に
 // 飛ばす（2026-10-25）。サーバーの /api/home/* などは未ログインでも叩けるままで、
 // ここで塞いでいるのは画面だけ（BACKLOG 4-a の 4）。
+// プライバシーポリシーは登録前に読めないと意味が無く、Google の同意画面からも未ログインで開かれるので公開にする。
 function App() {
   return (
     <Routes>
       <Route path="/login" element={<AuthFormPage mode="login" />} />
       <Route path="/signup" element={<AuthFormPage mode="signup" />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
       <Route
         path="/"
         element={
