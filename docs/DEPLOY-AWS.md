@@ -784,8 +784,15 @@ aws ecs wait services-stable --cluster amt-cluster --services amt-service
   （変更はできない）。気になるなら `DELETE FROM user_identities WHERE provider = 'password' AND password_hash = ''` を流す
 - **スナップショットからの復元は最後の手段。** スナップショット以降の書き込み（記録）がすべて失われ、
   新しいインスタンスになるので `DATABASE_URL` の SSM も書き換えになる
-- `rollback-0007-0006.sql` はローカルの使い捨て DB で、up → down → 二重の down（失敗して何も変わらない）を確かめた（2026-11-02）。
-  本番ではまだ流していない
+- **ローカルで通し稽古をした（2026-11-03、使い捨ての DB、`75d2102` と `792f244` のバイナリを交互に起動）。本番ではまだ流していない**
+
+  | 段階 | 結果 |
+  | --- | --- |
+  | 古いイメージで空の DB → 新しいイメージ | 0006・0007 が適用される。0006 より前の Cookie のままログイン状態が続く |
+  | **down を流さずに古いイメージ** | `already up to date (5 migrations)` で起動し、**`/healthz` は 200**。ログインと新規登録は 400（本文に `column "password_hash" does not exist`）、ログイン中の確認は 401 |
+  | `rollback-0007-0006.sql` → 古いイメージ | 全員ログアウトされ、パスワードでログインし直せる（新しいイメージで登録した人も）。新規登録もできる。Google だけの人は 401。記録は残る |
+  | もう一度新しいイメージ | 0006・0007 が再適用され、古いイメージで登録した人もログインできる。Google だけの人は空のハッシュの `password` 行になる（上の後片付けの SQL で消えることも確かめた） |
+  | `rollback-0007-0006.sql` を 2 回流す | 2 回目は `already exists` で失敗し、何も変わらない |
 
 ### AI（Claude）の API キーを入れる（一度だけ）
 
