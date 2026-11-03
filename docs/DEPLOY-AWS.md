@@ -1017,6 +1017,8 @@ bash deploy/run-sql.sh deploy/sql/check-migrations.sql
 ```
 
 `deploy/run-sql.sh` は、流す SQL を表示して `y` の確認を求め、`run-task` → 終了を待つ → 終了コードとログを表示する。
+**psql が失敗したとき（`exitCode` が 0 以外）と、コンテナが起動しなかったとき（`None`）は、スクリプト自体も `exit 1` で終わる。**
+起動しなかったときはログストリームができないので、表の `stoppedReason`（イメージの取得や SSM の読み込みの失敗）を見る。
 サブネットと SG は実行のたびに `amt-service` から引く。
 
 - **SQL は `--single-transaction` と `ON_ERROR_STOP=1` で流れる。** どこかで失敗すればファイル全体が巻き戻る。
