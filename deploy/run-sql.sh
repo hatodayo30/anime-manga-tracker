@@ -12,6 +12,9 @@
 # - -a で流した SQL もログに出す（何を流したかが CloudWatch に残る）
 set -euo pipefail
 
+# AWS CLI v2 は長い出力を less に渡す。describe-tasks の表やログで止まったように見えるのを防ぐ
+export AWS_PAGER=""
+
 SQL_FILE=${1:?usage: bash deploy/run-sql.sh <file.sql>}
 REGION=${AWS_REGION:-ap-northeast-1}
 CLUSTER=amt-cluster
@@ -45,7 +48,21 @@ aws ecs wait tasks-stopped --region "$REGION" --cluster "$CLUSTER" --tasks "$TAS
 aws ecs describe-tasks --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN" \
   --query 'tasks[0].{stoppedReason:stoppedReason,exitCode:containers[0].exitCode,reason:containers[0].reason}' \
   --output table
+EXIT_CODE=$(aws ecs describe-tasks --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+  --query 'tasks[0].containers[0].exitCode' --output text)
 
 echo "== ログ"
+# イメージの取得や SSM の読み込みで失敗するとコンテナが起動せず、ログストリームができない。
+# そのときもここで止めず、上の表の stoppedReason を見るよう促して終了コードの判定まで進む
 aws logs get-log-events --region "$REGION" --log-group-name "$LOG_GROUP" \
-  --log-stream-name "psql/psql/${TASK_ARN##*/}" --query 'events[].message' --output text | tr '\t' '\n'
+  --log-stream-name "psql/psql/${TASK_ARN##*/}" --query 'events[].message' --output text 2>/dev/null \
+  | tr '\t' '\n' \
+  || echo "（ログが無い。コンテナが起動していない可能性が高いので、上の表の stoppedReason を見る）"
+
+# psql が失敗してもタスクの停止自体は正常なので、ここで判定しないとスクリプトは成功で終わってしまう。
+# 起動しなかったとき exitCode は None になる
+if [[ "$EXIT_CODE" != "0" ]]; then
+  echo "== 失敗（exitCode: $EXIT_CODE）。--single-transaction なので、このファイルの変更は何も残っていない"
+  exit 1
+fi
+echo "== 成功（exitCode: 0）"
